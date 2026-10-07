@@ -52,6 +52,7 @@ export type QuestCard = {
   currency: string;
   host: UserLite;
   faces: UserLite[];
+  tour: boolean;
 };
 
 export type CostLine = { label: string; cents: number; split: "shared" | "each" };
@@ -93,7 +94,7 @@ export type Proposal = {
   title: string;
   rationale: string;
   actions: ProposalAction[];
-  status: "pending" | "executed" | "declined" | "failed";
+  status: "pending" | "running" | "executed" | "declined" | "failed" | "expired";
   result: { done?: { type: string; name: string }[]; error?: string } | null;
   created_at: string;
 };
@@ -116,9 +117,11 @@ export type QuestDetail = QuestCard & {
   proposals: Proposal[];
   timestamps: Record<string, string | null>;
   paypal_mode: "mock" | "sandbox";
+  host_stats: { hosted: number; completed: number; travelers: number };
 };
 
 export type AppConfig = {
+  demo_buyer: { email: string; password: string } | null;
   paypal_mode: "mock" | "sandbox";
   paypal_client_id: string | null;
   currency: string;

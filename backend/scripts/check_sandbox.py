@@ -31,6 +31,18 @@ from app.pricing import fmt  # noqa: E402
 def step(n, text):
     print(f"\n[{n}] {text}")
 
+def wait_for_approval(gw, order_id, url):
+    """Keep asking until PayPal reports the order as APPROVED."""
+    while True:
+        input("    Approve it in the browser, then press Enter. ")
+        status = gw.get_order(order_id).get("status")
+        if status == "APPROVED":
+            print("    approved")
+            return
+        print(f"    PayPal still shows {status}. Open the link again and finish approving:")
+        print(f"    {url}")
+
+
 
 def main():
     if not settings.paypal_live_keys:
@@ -49,7 +61,8 @@ def main():
     print(f"    approve here: {order.approve_url}")
 
     step(3, "Approve it")
-    input("    Log in with a sandbox PERSONAL account, approve, then press Enter here. ")
+    print("    Log in with a sandbox PERSONAL account and approve.")
+    wait_for_approval(gw, order.order_id, order.approve_url)
 
     step(4, "Authorize, capture the final split, refund part")
     auth = gw.authorize_order(order.order_id)
@@ -63,7 +76,7 @@ def main():
     order2 = gw.create_order(4500, "USD", ref + "-2", "Sidequest void check",
                              return_url="https://example.com/return", cancel_url="https://example.com/cancel")
     print(f"    approve here: {order2.approve_url}")
-    input("    Approve this one too, then press Enter. ")
+    wait_for_approval(gw, order2.order_id, order2.approve_url)
     auth2 = gw.authorize_order(order2.order_id)
     print(f"    authorization {auth2.authorization_id}, voiding")
     print(f"    {gw.void_authorization(auth2.authorization_id)}")

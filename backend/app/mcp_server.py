@@ -44,7 +44,7 @@ def _summary(card: dict) -> dict:
         "max_price": fmt(card["hold_cents"]),
         "price_if_full": fmt(card["lowest_cents"]),
         "price_now": fmt(card["share_cents"]),
-        "url": f"{settings.frontend_url}/q/{card['id']}",
+        "url": f"{settings.frontend_url}/join/{card['id']}",
     }
 
 
@@ -52,7 +52,8 @@ def _summary(card: dict) -> dict:
 def list_quests(area: str | None = None, max_price_usd: float | None = None) -> list[dict]:
     """List quests that are still taking people. Optionally filter by area text or by the max price."""
     with session_scope() as db:
-        rows = db.scalars(select(Quest).where(Quest.status.in_(["open", "on"])).order_by(Quest.starts_at)).all()
+        rows = db.scalars(select(Quest).where(Quest.status.in_(["open", "on"]), Quest.tour.isnot(True))
+                          .order_by(Quest.starts_at)).all()
         cards = [quest_card(q) for q in rows]
     if area:
         cards = [c for c in cards if area.lower() in (c["area"] + " " + c["title"]).lower()]

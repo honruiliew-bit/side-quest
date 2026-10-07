@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import time
+from collections import defaultdict, deque
+from contextlib import contextmanager
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
@@ -40,6 +43,36 @@ def _detail(db: Session, q: Quest, user: User | None) -> dict:
     return quest_detail(db, q, user)
 
 
+@contextmanager
+def locked(db: Session, quest_id: str):
+    """Run a money move under the quest's lock, on fresh data, and commit before releasing the lock."""
+    with engine.quest_lock(quest_id):
+        db.expire_all()
+        q = _quest(db, quest_id)
+        try:
+            yield q
+            db.commit()
+        except Exception:
+            db.rollback()
+            raise
+
+
+# Holds last 29 days at PayPal. Keep every quest's deadline inside that window.
+MAX_DEADLINE = timedelta(days=28)
+
+_chat_log: defaultdict[str, deque] = defaultdict(deque)
+
+
+def _rate_limit_chat(user_id: str) -> None:
+    now = time.monotonic()
+    window = _chat_log[user_id]
+    while window and now - window[0] > 60:
+        window.popleft()
+    if len(window) >= settings.chat_per_minute:
+        raise HTTPException(429, "You're sending messages quickly. Wait a few seconds and try again.")
+    window.append(now)
+
+
 # --- Meta ----------------------------------------------------------------------
 
 @router.get("/health")
@@ -49,7 +82,9 @@ def health():
 
 @router.get("/config")
 def config():
+    show_buyer = settings.demo_mode and paypal_mode() == "sandbox" and settings.demo_buyer_email
     return {
+        "demo_buyer": {"email": settings.demo_buyer_email, "password": settings.demo_buyer_password} if show_buyer else None,
         "paypal_mode": paypal_mode(),
         "paypal_client_id": settings.paypal_client_id if paypal_mode() == "sandbox" else None,
         "currency": settings.currency,
@@ -116,7 +151,7 @@ def me(user: User = Depends(require_user), db: Session = Depends(get_db)):
 
 @router.get("/quests")
 def list_quests(status: str = "active", db: Session = Depends(get_db)):
-    stmt = select(Quest).order_by(Quest.starts_at)
+    stmt = select(Quest).where(Quest.tour.isnot(True)).order_by(Quest.starts_at)
     if status == "active":
         stmt = stmt.where(Quest.status.in_(["open", "on", "locked"]))
     elif status != "all":
@@ -182,6 +217,8 @@ def create_quest(body: QuestIn, user: User = Depends(require_user), db: Session 
     join_by = starts - timedelta(hours=body.join_by_hours_before)
     if join_by <= utcnow():
         raise HTTPException(422, "The join deadline would already be over. Pick a later date or a shorter deadline.")
+    if join_by - utcnow() > MAX_DEADLINE:
+        raise HTTPException(422, "PayPal holds last 29 days, so the join deadline has to be within 28 days. Pick an earlier date.")
     q = Quest(
         number=engine.next_number(db), host_id=user.id, title=body.title, area=body.area, summary=body.summary,
         line_code=(body.line_code or "SQ").upper()[:2], from_label=body.from_label, to_label=body.to_label,
@@ -203,9 +240,8 @@ def create_quest(body: QuestIn, user: User = Depends(require_user), db: Session 
 
 @router.post("/quests/{quest_id}/holds")
 def start_hold(quest_id: str, user: User = Depends(require_user), db: Session = Depends(get_db)):
-    q = _quest(db, quest_id)
-    m, order_id, approve_url = engine.start_hold(db, q, user)
-    db.commit()
+    with locked(db, quest_id) as q:
+        m, order_id, approve_url = engine.start_hold(db, q, user)
     return {"membership_id": m.id, "order_id": order_id, "approve_url": approve_url,
             "hold_cents": m.hold_cents, "paypal_mode": paypal_mode()}
 
@@ -220,8 +256,14 @@ def confirm_hold(membership_id: str, body: ConfirmIn, user: User | None = Depend
     m = db.get(Membership, membership_id)
     if not m:
         raise HTTPException(404, "That hold doesn't exist.")
-    engine.confirm_hold(db, m, body.order_id)
-    return _detail(db, m.quest, user or m.user)
+    with locked(db, m.quest_id) as q:
+        m = db.get(Membership, membership_id)
+        try:
+            engine.confirm_hold(db, m, body.order_id)
+        except engine.QuestError:
+            db.commit()  # keep the abandoned or failed status
+            raise
+    return _detail(db, q, user or m.user)
 
 
 @router.get("/paypal/orders/{order_id}")
@@ -235,11 +277,11 @@ def order_lookup(order_id: str, db: Session = Depends(get_db)):
 
 @router.post("/quests/{quest_id}/leave")
 def leave(quest_id: str, user: User = Depends(require_user), db: Session = Depends(get_db)):
-    q = _quest(db, quest_id)
-    m = engine.membership_for(q, user.id)
-    if not m:
-        raise HTTPException(400, "You're not on this quest.")
-    result = engine.leave(db, m)
+    with locked(db, quest_id) as q:
+        m = engine.membership_for(q, user.id)
+        if not m:
+            raise HTTPException(400, "You're not on this quest.")
+        result = engine.leave(db, m)
     return {"result": result, "quest": _detail(db, q, user)}
 
 
@@ -247,25 +289,25 @@ def leave(quest_id: str, user: User = Depends(require_user), db: Session = Depen
 
 @router.post("/quests/{quest_id}/lock")
 def lock(quest_id: str, user: User = Depends(require_user), db: Session = Depends(get_db)):
-    q = _quest(db, quest_id)
-    _host_only(q, user)
-    engine.lock(db, q, reason=f"{user.name} locked the quest.")
+    with locked(db, quest_id) as q:
+        _host_only(q, user)
+        engine.lock(db, q, reason=f"{user.name} locked the quest.")
     return _detail(db, q, user)
 
 
 @router.post("/quests/{quest_id}/complete")
 def complete(quest_id: str, user: User = Depends(require_user), db: Session = Depends(get_db)):
-    q = _quest(db, quest_id)
-    _host_only(q, user)
-    engine.complete(db, q)
+    with locked(db, quest_id) as q:
+        _host_only(q, user)
+        engine.complete(db, q)
     return _detail(db, q, user)
 
 
 @router.post("/quests/{quest_id}/cancel")
 def cancel(quest_id: str, user: User = Depends(require_user), db: Session = Depends(get_db)):
-    q = _quest(db, quest_id)
-    _host_only(q, user)
-    engine.cancel(db, q, f"{user.name} cancelled the quest.")
+    with locked(db, quest_id) as q:
+        _host_only(q, user)
+        engine.cancel(db, q, f"{user.name} cancelled the quest.")
     return _detail(db, q, user)
 
 
@@ -276,9 +318,9 @@ class SettleIn(BaseModel):
 
 @router.post("/quests/{quest_id}/settle")
 def settle(quest_id: str, body: SettleIn, user: User = Depends(require_user), db: Session = Depends(get_db)):
-    q = _quest(db, quest_id)
-    _host_only(q, user)
-    engine.propose_settle_up(db, q, body.actual_shared_cents, body.note)
+    with locked(db, quest_id) as q:
+        _host_only(q, user)
+        engine.propose_settle_up(db, q, body.actual_shared_cents, body.note)
     return _detail(db, q, user)
 
 
@@ -291,9 +333,9 @@ def decide(proposal_id: str, body: DecideIn, user: User = Depends(require_user),
     p = db.get(Proposal, proposal_id)
     if not p:
         raise HTTPException(404, "That proposal doesn't exist.")
-    q = _quest(db, p.quest_id)
-    _host_only(q, user)
-    engine.decide_proposal(db, p, body.approve)
+    with locked(db, p.quest_id) as q:
+        _host_only(q, user)
+        engine.decide_proposal(db, db.get(Proposal, proposal_id), body.approve)
     return _detail(db, q, user)
 
 
@@ -305,8 +347,9 @@ class ChatIn(BaseModel):
 
 @router.post("/quests/{quest_id}/chat")
 def chat(quest_id: str, body: ChatIn, user: User = Depends(require_user), db: Session = Depends(get_db)):
-    q = _quest(db, quest_id)
-    reply = keeper.reply(db, q, user, body.text.strip())
+    _rate_limit_chat(user.id)
+    with locked(db, quest_id) as q:
+        reply = keeper.reply(db, q, user, body.text.strip())
     return {"reply": reply, "quest": _detail(db, q, user)}
 
 
@@ -331,9 +374,34 @@ async def paypal_webhook(request: Request, db: Session = Depends(get_db)):
     resource = event.get("resource") or {}
     db.add(WebhookEvent(id=event_id, event_type=event.get("event_type", ""), resource_id=resource.get("id"),
                         verified=verified, payload=event))
-    outcome = engine.handle_webhook(db, event)
     db.commit()
+    batch = (resource.get("batch_header") or {}).get("payout_batch_id") or resource.get("payout_batch_id")
+    quest_id = _quest_for_resource(db, resource.get("id")) or _quest_for_resource(db, batch)
+    if not quest_id:
+        return {"status": "unknown"}
+    with engine.quest_lock(quest_id):
+        db.expire_all()
+        try:
+            outcome = engine.handle_webhook(db, event)
+            db.commit()
+        except engine.QuestError as exc:
+            db.rollback()
+            outcome = f"skipped: {exc}"
     return {"status": outcome}
+
+
+def _quest_for_resource(db: Session, rid: str | None) -> str | None:
+    """Find which quest a PayPal object belongs to: order, authorization, capture, or ledger reference."""
+    if not rid:
+        return None
+    m = db.scalar(select(Membership).where(
+        (Membership.order_id == rid) | (Membership.authorization_id == rid) | (Membership.capture_id == rid)))
+    if m:
+        return m.quest_id
+    from .models import LedgerEntry
+
+    entry = db.scalar(select(LedgerEntry).where(LedgerEntry.paypal_ref == rid))
+    return entry.quest_id if entry else None
 
 
 # --- Clock ------------------------------------------------------------------------------
@@ -361,20 +429,20 @@ class CrowdIn(BaseModel):
 @router.post("/demo/quests/{quest_id}/crowd")
 def demo_crowd(quest_id: str, body: CrowdIn, user: User | None = Depends(optional_user), db: Session = Depends(get_db)):
     _demo_only()
-    q = _quest(db, quest_id)
-    people = ensure_personas(db)
-    taken = {m.user_id for m in q.memberships if m.status in engine.ACTIVE}
-    added = 0
-    for persona, *_ in PERSONAS:
-        if added >= body.count:
-            break
-        u = people[persona]
-        if u.id in taken or u.id == q.host_id and engine.membership_for(q, u.id):
-            continue
-        engine.simulate_join(db, q, u)
-        added += 1
-    if not added:
-        raise HTTPException(400, "Every demo persona is already on this quest.")
+    with locked(db, quest_id) as q:
+        people = ensure_personas(db)
+        taken = {m.user_id for m in q.memberships if m.status in engine.ACTIVE}
+        added = 0
+        for persona, *_ in PERSONAS:
+            if added >= body.count:
+                break
+            u = people[persona]
+            if u.id in taken:
+                continue
+            engine.simulate_join(db, q, u)
+            added += 1
+        if not added:
+            raise HTTPException(400, "Every demo persona is already on this quest.")
     return _detail(db, q, user)
 
 
@@ -382,11 +450,20 @@ def demo_crowd(quest_id: str, body: CrowdIn, user: User | None = Depends(optiona
 def demo_deadline(quest_id: str, user: User | None = Depends(optional_user), db: Session = Depends(get_db)):
     """Jump the clock to the join deadline and let the scheduler do its job."""
     _demo_only()
-    q = _quest(db, quest_id)
-    q.join_by = utcnow() - timedelta(seconds=1)
-    db.flush()
+    with locked(db, quest_id) as q:
+        q.join_by = utcnow() - timedelta(seconds=1)
     engine.tick(db)
+    q = _quest(db, quest_id)
     return _detail(db, q, user)
+
+
+@router.post("/demo/tour")
+def demo_tour(db: Session = Depends(get_db)):
+    """A private copy of the hero quest for one judge, so nobody's walkthrough collides with anyone else's."""
+    _demo_only()
+    q = seeding.make_tour(db)
+    db.commit()
+    return {"id": q.id}
 
 
 @router.post("/demo/reset")

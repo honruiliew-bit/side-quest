@@ -11,6 +11,7 @@ const config: Config = {
         ink: "#1a2130",
         muted: "#556070",
         rule: "#c9cfc2",
+        dash: "#8a93a0",
         signal: "#ffc93c",
         money: "#1f5fd6",
         stamp: "#d7362a",

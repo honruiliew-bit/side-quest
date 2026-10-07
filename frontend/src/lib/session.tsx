@@ -81,10 +81,18 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
             return null;
           }
         })();
+        let restored = false;
         if (getToken() && cached) {
-          setUser(cached);
-        } else if (cfg.demo_mode) {
-          await signInAs(DEFAULT_PERSONA);
+          try {
+            const me = await api<{ user: UserLite }>("/me");
+            if (alive) setUser(me.user);
+            restored = true;
+          } catch {
+            setToken(null);
+          }
+        }
+        if (!restored && cfg.demo_mode) {
+          await signInAs(cached?.persona || DEFAULT_PERSONA);
         }
       } catch (e) {
         toast(e instanceof Error ? e.message : "Couldn't load Sidequest.", "error");

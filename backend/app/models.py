@@ -82,6 +82,8 @@ class Quest(Base):
     ends_at: Mapped[datetime | None] = mapped_column(TZDateTime(), nullable=True)
     join_by: Mapped[datetime] = mapped_column(TZDateTime())
     tz: Mapped[str] = mapped_column(String(40), default="America/New_York")
+    # Set on copies made by the guided demo, so the UI can show the walkthrough.
+    tour: Mapped[bool | None] = mapped_column(Boolean, nullable=True, default=False)
     min_people: Mapped[int] = mapped_column(Integer)
     max_people: Mapped[int] = mapped_column(Integer)
     currency: Mapped[str] = mapped_column(String(3), default="USD")
@@ -190,7 +192,7 @@ class Proposal(Base):
     rationale: Mapped[str] = mapped_column(Text, default="")
     # [{"type": "void_hold" | "promote" | "refund" | "invoice", ...}]
     actions: Mapped[list] = mapped_column(JSON, default=list)
-    status: Mapped[str] = mapped_column(String(12), default="pending")  # pending|executed|declined|failed
+    status: Mapped[str] = mapped_column(String(12), default="pending")  # pending|running|executed|declined|failed|expired
     result: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     created_at: Mapped[datetime] = mapped_column(TZDateTime(), default=utcnow)
     decided_at: Mapped[datetime | None] = mapped_column(TZDateTime(), nullable=True)

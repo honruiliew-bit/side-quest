@@ -264,6 +264,18 @@ textarea.field {
   height: 26px;
   font-size: 15px;
 }
+@media (max-width: 480px) {
+  .flaps {
+    gap: 2px;
+    padding: 5px;
+  }
+  .flap,
+  .flap-lg {
+    width: 18px;
+    height: 28px;
+    font-size: 16px;
+  }
+}
 .flap-anim {
   animation: flap 220ms var(--ease-out) both;
   transform-origin: 50% 50%;

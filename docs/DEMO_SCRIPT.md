@@ -16,7 +16,7 @@ Judging weighs presentation equally with the other four criteria, and Best Demo 
 
 ## 0:30 to 1:05. The hero moment
 
-**Visual:** Open Apple picking. Point at 4 of 5 and the $81.00 max hold. Click Hold, approve on PayPal's sandbox page. The board flips to IT'S ON, the stamp lands, the money route moves.
+**Visual:** Open the invite link for Apple picking, the page a friend would get. Point at the faces, 1 seat to go, and "Up to $81.00". Click Hold, approve on PayPal's sandbox page. The full quest page opens: the board flips to IT'S ON, the stamp lands, the money route moves.
 
 **Voice:** "That's a real PayPal authorization at the max price. Seat five just filled, so the quest is on. Two more people join..." (Demo controls, add 2) "...and everyone's share drops from $81 to $67.29."
 

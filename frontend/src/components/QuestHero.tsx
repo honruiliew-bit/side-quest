@@ -25,7 +25,10 @@ export function QuestHero({ q, onChange }: { q: QuestDetail; onChange: (q: Quest
               {q.area} line, {dayShort(q.starts_at, q.tz)} departure
             </span>
           </div>
-          <Board text={statusBoard(q.status, q.headcount, q.min_people, q.max_people)} length={12} label={`Status: ${q.status}, ${q.headcount} going`} />
+          <div className="flex flex-wrap items-center gap-3">
+            <ShareInvite id={q.id} />
+            <Board text={statusBoard(q.status, q.headcount, q.min_people, q.max_people)} length={12} label={`Status: ${q.status}, ${q.headcount} going`} />
+          </div>
         </div>
 
         <div className="ticket relative flex flex-wrap">
@@ -194,5 +197,26 @@ function MineLine({ chip, text }: { chip: string; text: string }) {
       <span className={`chip ${chip}`}>You</span>
       <span>{text}</span>
     </div>
+  );
+}
+
+function ShareInvite({ id }: { id: string }) {
+  const { toast } = useSession();
+  return (
+    <button
+      type="button"
+      className="btn btn-ghost btn-sm"
+      onClick={async () => {
+        const url = `${window.location.origin}/join/${id}`;
+        try {
+          await navigator.clipboard.writeText(url);
+          toast("Invite link copied.");
+        } catch {
+          window.open(url, "_blank");
+        }
+      }}
+    >
+      Copy invite link
+    </button>
   );
 }

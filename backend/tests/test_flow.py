@@ -193,3 +193,29 @@ def test_mcp_lists_quests(client):
 def test_tick_requires_secret(client):
     assert client.post("/cron/tick").status_code == 403
     assert client.post("/cron/tick", headers={"X-Cron-Secret": "tick"}).status_code == 200
+
+
+def test_proposal_runs_once_and_duplicates_collapse(client):
+    from app.db import session_scope
+    from app.models import Quest
+    from app import engine
+
+    hh = quest_by_code(client, "HH")
+    with session_scope() as db:
+        q = db.get(Quest, hh["id"])
+        dev = [m for m in q.memberships if m.user.persona == "dev"][0]
+        leo = [m for m in q.memberships if m.user.persona == "leo"][0]
+        acts = [{"type": "promote", "membership_id": leo.id},
+                {"type": "refund", "membership_id": dev.id, "cents": dev.charged_cents, "note": "a"}]
+        p1 = engine.create_proposal(db, q, "Swap", "why", acts)
+        acts[1]["note"] = "different wording"
+        p2 = engine.create_proposal(db, q, "Swap again", "why", acts)
+        assert p1.id == p2.id
+        pid = p1.id
+    ana = login(client, "ana")
+    assert client.post(f"/proposals/{pid}/decide", json={"approve": True}, headers=ana).status_code == 200
+    second = client.post(f"/proposals/{pid}/decide", json={"approve": True}, headers=ana)
+    assert second.status_code == 409
+    d = client.get(f"/quests/{hh['id']}").json()
+    assert sum(1 for e in d["ledger"] if e["kind"] == "refund") == 1
+    assert sum(1 for e in d["ledger"] if e["kind"] == "charge" and e["user"]["name"] == "Leo") == 1

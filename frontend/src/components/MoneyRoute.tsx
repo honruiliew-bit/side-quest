@@ -23,7 +23,9 @@ export function MoneyRoute({ q }: { q: QuestDetail }) {
     },
     {
       title: "Everyone charged",
-      detail: stage >= 3 ? `${money(q.money.charged_cents)} captured at ${money(q.share_cents)} each` : "At the final split, never above the hold",
+      detail: stage >= 3
+        ? `${money(q.money.charged_cents - q.money.refunded_cents)} kept at ${money(q.share_cents)} each${q.money.refunded_cents ? `, ${money(q.money.refunded_cents)} refunded` : ""}`
+        : "At the final split, never above the hold",
       api: "Capture authorization",
     },
     {
@@ -75,6 +77,10 @@ export function MoneyRoute({ q }: { q: QuestDetail }) {
           })}
         </ol>
       </div>
+      <p className="text-[13px] text-muted">
+        PayPal holds last up to 29 days. If a quest locks more than 3 days after someone joined, Sidequest reauthorizes
+        that hold before charging it.
+      </p>
     </section>
   );
 }

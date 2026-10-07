@@ -49,6 +49,47 @@ def _quest(db: Session, host: User, **kw) -> Quest:
     return q
 
 
+HERO = dict(
+    line_code="HV",
+    title="Apple picking and cider in the Hudson Valley", area="Hudson Valley",
+    summary="A minivan out of Midtown, an orchard, a farm lunch and a cider flight. Back in the city by seven.",
+    from_label="Grand Central", to_label="Fishkill, NY",
+    meet_point="42nd St and Park Ave, by the Pershing Square corner",
+    min_people=5, max_people=7,
+    cost_lines=[
+        {"label": "Minivan rental", "cents": 18000, "split": "shared"},
+        {"label": "Gas and tolls", "cents": 6000, "split": "shared"},
+        {"label": "Orchard entry", "cents": 1500, "split": "each"},
+        {"label": "Cider flight", "cents": 1800, "split": "each"},
+    ],
+    itinerary=[
+        {"time": "8:10 am", "title": "Meet at the van", "detail": "42nd St and Park Ave, by the Pershing Square corner"},
+        {"time": "10:00 am", "title": "Apple picking", "detail": "Orchard entry and a half-peck bag each"},
+        {"time": "1:00 pm", "title": "Lunch at the farm cafe", "detail": "Pay your own",
+         "note": "Two vegetarian sandwiches and a soup on the menu."},
+        {"time": "2:30 pm", "title": "Cider tasting", "detail": "Flight of five, 21 and over"},
+        {"time": "5:00 pm", "title": "Drive back to the city", "detail": "Drop-offs in Midtown"},
+    ],
+)
+
+
+def _hero(sat: date, now: datetime) -> dict:
+    return dict(HERO, starts_at=_at(sat, 8, 10), ends_at=_at(sat, 19),
+                join_by=max(_at(sat - timedelta(days=2), 21), now + timedelta(days=1)))
+
+
+def make_tour(db: Session) -> Quest:
+    """A private copy of the hero quest, four of five people in, for the guided demo."""
+    p = ensure_personas(db)
+    sat = _next_weekday(5, min_days=3)
+    now = datetime.now(TZ)
+    q = _quest(db, p["hon"], tour=True, **_hero(sat, now))
+    for who in ("hon", "maya", "dev", "priya"):
+        _join(db, q, p[who])
+    db.flush()
+    return q
+
+
 def seed(db: Session) -> None:
     p = ensure_personas(db)
     sat = _next_weekday(5)
@@ -56,29 +97,7 @@ def seed(db: Session) -> None:
     now = datetime.now(TZ)
 
     # 1. The hero quest. 4 of 5, one more and it's on.
-    hv = _quest(
-        db, p["hon"], line_code="HV",
-        title="Apple picking and cider in the Hudson Valley", area="Hudson Valley",
-        summary="A minivan out of Midtown, an orchard, a farm lunch and a cider flight. Back in the city by seven.",
-        from_label="Grand Central", to_label="Fishkill, NY",
-        meet_point="42nd St and Park Ave, by the Pershing Square corner",
-        starts_at=_at(sat, 8, 10), ends_at=_at(sat, 19), join_by=max(_at(sat - timedelta(days=2), 21), now + timedelta(days=1)),
-        min_people=5, max_people=7,
-        cost_lines=[
-            {"label": "Minivan rental", "cents": 18000, "split": "shared"},
-            {"label": "Gas and tolls", "cents": 6000, "split": "shared"},
-            {"label": "Orchard entry", "cents": 1500, "split": "each"},
-            {"label": "Cider flight", "cents": 1800, "split": "each"},
-        ],
-        itinerary=[
-            {"time": "8:10 am", "title": "Meet at the van", "detail": "42nd St and Park Ave, by the Pershing Square corner"},
-            {"time": "10:00 am", "title": "Apple picking", "detail": "Orchard entry and a half-peck bag each"},
-            {"time": "1:00 pm", "title": "Lunch at the farm cafe", "detail": "Pay your own",
-             "note": "Two vegetarian sandwiches and a soup on the menu."},
-            {"time": "2:30 pm", "title": "Cider tasting", "detail": "Flight of five, 21 and over"},
-            {"time": "5:00 pm", "title": "Drive back to the city", "detail": "Drop-offs in Midtown"},
-        ],
-    )
+    hv = _quest(db, p["hon"], **_hero(sat, now))
     for who in ("hon", "maya", "dev", "priya"):
         _join(db, hv, p[who])
     engine.say(db, hv, "Is there anything vegetarian for lunch?", role="user", user=p["priya"])

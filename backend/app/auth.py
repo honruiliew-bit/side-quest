@@ -38,7 +38,8 @@ def ensure_personas(db: Session) -> dict[str, User]:
     for persona, name, email, color in PERSONAS:
         u = db.scalar(select(User).where(User.email == email))
         if not u:
-            u = User(name=name, email=email, color=color, is_demo=True, persona=persona)
+            # Stable ids, so a saved session still works after the demo data is reset.
+            u = User(id=f"usr_{persona}", name=name, email=email, color=color, is_demo=True, persona=persona)
             db.add(u)
         out[persona] = u
     db.flush()

@@ -17,10 +17,13 @@ Rules the agent cannot bend
 
 from __future__ import annotations
 
+import threading
+from collections import defaultdict
+from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 from math import floor
 
-from sqlalchemy import func, select
+from sqlalchemy import func, select, update
 from sqlalchemy.orm import Session
 
 from .config import settings
@@ -31,6 +34,20 @@ from .pricing import fmt, hold_cents, price_cents
 
 ACTIVE = {"pending", "held", "standby", "charged"}
 HONOR_PERIOD = timedelta(days=3)
+
+
+_locks: defaultdict[str, threading.RLock] = defaultdict(threading.RLock)
+_locks_guard = threading.Lock()
+
+
+@contextmanager
+def quest_lock(quest_id: str):
+    """Serialize every money move on one quest. The API runs as a single process, so this is enough
+    to stop two joins taking the same seat or a webhook and a click authorizing the same order."""
+    with _locks_guard:
+        lock = _locks[quest_id]
+    with lock:
+        yield
 
 
 class QuestError(Exception):
@@ -163,10 +180,17 @@ def confirm_hold(db: Session, m: Membership, order_id: str | None = None) -> Mem
     if m.status in {"held", "standby", "charged"}:
         return m
     if m.status != "pending":
-        raise QuestError("This hold is no longer pending.")
+        if m.quest.status not in {"open", "on"}:
+            raise QuestError("This quest closed before your hold went through. Nothing was held.", 409)
+        raise QuestError("This hold is no longer pending. Start again from the quest page.")
     if order_id and m.order_id and order_id != m.order_id:
         raise QuestError("That PayPal order does not belong to this hold.")
     quest = m.quest
+    if quest.status not in {"open", "on"} or aware(quest.join_by) < utcnow():
+        # Never authorize money for a quest that closed while the buyer was on PayPal.
+        m.status = "abandoned"
+        db.flush()
+        raise QuestError("This quest closed before your hold went through. Nothing was held.", 409)
     try:
         auth = _gateway(m).authorize_order(m.order_id)
     except PayPalError as exc:
@@ -491,8 +515,9 @@ def _validate_actions(db: Session, quest: Quest, actions: list[dict]) -> list[di
 
 def create_proposal(db: Session, quest: Quest, title: str, rationale: str, actions: list[dict]) -> Proposal:
     clean = _validate_actions(db, quest, actions)
+    sig = _signature(clean)
     for p in db.scalars(select(Proposal).where(Proposal.quest_id == quest.id, Proposal.status == "pending")):
-        if p.actions == clean:
+        if _signature(p.actions) == sig:
             return p
     p = Proposal(quest_id=quest.id, title=title[:200], rationale=rationale, actions=clean)
     db.add(p)
@@ -501,9 +526,20 @@ def create_proposal(db: Session, quest: Quest, title: str, rationale: str, actio
     return p
 
 
+def _signature(actions: list[dict]) -> list[tuple]:
+    return sorted((a.get("type"), a.get("membership_id")) for a in actions)
+
+
 def decide_proposal(db: Session, p: Proposal, approve: bool) -> Proposal:
-    if p.status != "pending":
-        raise QuestError("This proposal was already decided.")
+    claimed = db.execute(
+        update(Proposal)
+        .where(Proposal.id == p.id, Proposal.status == "pending")
+        .values(status="running")
+        .execution_options(synchronize_session=False)
+    ).rowcount
+    if claimed != 1:
+        raise QuestError("This proposal was already decided.", 409)
+    p.status = "running"
     quest = db.get(Quest, p.quest_id)
     p.decided_at = utcnow()
     if not approve:
@@ -540,7 +576,19 @@ def decide_proposal(db: Session, p: Proposal, approve: bool) -> Proposal:
     p.result = {"done": results}
     say(db, quest, f"{quest.host.name} approved: {p.title}. Done on PayPal.", meta={"event": "executed"})
     db.flush()
+    _expire_stale(db, quest, keep=p.id)
     return p
+
+
+def _expire_stale(db: Session, quest: Quest, keep: str) -> None:
+    for other in db.scalars(select(Proposal).where(Proposal.quest_id == quest.id, Proposal.status == "pending",
+                                                    Proposal.id != keep)):
+        try:
+            _validate_actions(db, quest, other.actions)
+        except QuestError:
+            other.status = "expired"
+            other.decided_at = utcnow()
+    db.flush()
 
 
 def _reseat(quest: Quest) -> None:
@@ -578,23 +626,50 @@ def propose_settle_up(db: Session, quest: Quest, actual_shared_cents: int, note:
 # Clock and webhooks
 # ----------------------------------------------------------------------------
 
+NUDGE_WINDOW = timedelta(hours=24)
+
+
+def _nudge(db: Session, q: Quest, now: datetime) -> bool:
+    """The agent speaks up once when a quest is short with less than a day to go."""
+    short = q.min_people - headcount(q)
+    if q.status != "open" or short <= 0 or aware(q.join_by) - now > NUDGE_WINDOW:
+        return False
+    already = db.scalar(select(func.count(Message.id)).where(Message.quest_id == q.id, Message.role == "agent",
+                                                             Message.body.like("Heads up%")))
+    if already:
+        return False
+    hours = max(1, int((aware(q.join_by) - now).total_seconds() // 3600))
+    say(db, q, f"Heads up: {short} more {'person' if short == 1 else 'people'} needed in the next {hours} hours or "
+               f"this quest won't run. If it doesn't fill, every hold is released and nobody pays. "
+               f"Share this link: {settings.frontend_url}/join/{q.id}", role="agent", meta={"event": "nudge"})
+    return True
+
+
 def tick(db: Session) -> dict:
     now = utcnow()
-    counts = {"cancelled": 0, "locked": 0, "standby_released": 0, "abandoned": 0}
-    for q in db.scalars(select(Quest).where(Quest.status.in_(["open", "on", "locked"]))):
-        try:
-            if q.status == "open" and aware(q.join_by) <= now:
-                cancel(db, q, f"The deadline passed with {headcount(q)} of {q.min_people}.")
-                counts["cancelled"] += 1
-            elif q.status == "on" and aware(q.join_by) <= now:
-                lock(db, q, reason="The join deadline passed, so the quest locked.")
-                counts["locked"] += 1
-            elif q.status == "locked" and aware(q.starts_at) <= now:
-                for m in standby(q):
-                    release(db, m, note="Trip started, standby hold released")
-                    counts["standby_released"] += 1
-        except QuestError:
-            continue
+    counts = {"cancelled": 0, "locked": 0, "standby_released": 0, "abandoned": 0, "nudged": 0}
+    ids = list(db.scalars(select(Quest.id).where(Quest.status.in_(["open", "on", "locked"]))))
+    for qid in ids:
+        with quest_lock(qid):
+            q = db.get(Quest, qid)
+            db.refresh(q)
+            try:
+                if q.status == "open" and aware(q.join_by) <= now:
+                    cancel(db, q, f"The deadline passed with {headcount(q)} of {q.min_people}.")
+                    counts["cancelled"] += 1
+                elif q.status == "on" and aware(q.join_by) <= now:
+                    lock(db, q, reason="The join deadline passed, so the quest locked.")
+                    counts["locked"] += 1
+                elif q.status == "locked" and aware(q.starts_at) <= now:
+                    for m in standby(q):
+                        release(db, m, note="Trip started, standby hold released")
+                        counts["standby_released"] += 1
+                elif _nudge(db, q, now):
+                    counts["nudged"] += 1
+                db.commit()
+            except QuestError:
+                db.rollback()
+                continue
     stale = now - timedelta(hours=3)
     for m in db.scalars(select(Membership).where(Membership.status == "pending")):
         if aware(m.created_at) < stale:

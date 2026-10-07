@@ -50,6 +50,7 @@ def quest_card(q: Quest) -> dict:
         "currency": q.currency,
         "host": user_out(q.host),
         "faces": [user_out(m.user) for m in people][:q.max_people],
+        "tour": bool(q.tour),
     }
 
 
@@ -103,6 +104,12 @@ def quest_detail(db: Session, q: Quest, viewer: User | None) -> dict:
         select(Proposal).where(Proposal.quest_id == q.id).order_by(Proposal.created_at.desc()).limit(20)
     ).all()
 
+    hosted = db.scalars(select(Quest).where(Quest.host_id == q.host_id, Quest.tour.isnot(True))).all()
+    host_stats = {
+        "hosted": len(hosted),
+        "completed": sum(1 for h in hosted if h.status == "completed"),
+        "travelers": sum(len(seated(h)) for h in hosted if h.status == "completed"),
+    }
     held = sum(m.hold_cents for m in q.memberships if m.status in {"held", "standby"})
     charged = sum(m.charged_cents for m in q.memberships)
     refunded = sum(m.refunded_cents for m in q.memberships)
@@ -138,6 +145,7 @@ def quest_detail(db: Session, q: Quest, viewer: User | None) -> dict:
             "completed_at": iso(q.completed_at), "cancelled_at": iso(q.cancelled_at),
         },
         "paypal_mode": paypal_mode(),
+        "host_stats": host_stats,
     })
     return out
 

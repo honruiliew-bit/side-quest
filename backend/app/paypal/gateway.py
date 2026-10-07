@@ -185,7 +185,11 @@ class SandboxGateway:
             body = {"text": resp.text}
         if resp.status_code >= 400:
             message = body.get("message") or body.get("error_description") or f"PayPal returned {resp.status_code}"
-            raise PayPalError(message, resp.status_code, body.get("details"), body.get("debug_id"))
+            details = body.get("details")
+            if isinstance(details, list) and details:
+                d = details[0]
+                message = f"{d.get('issue', '')}: {d.get('description', message)}".strip(": ")
+            raise PayPalError(message, resp.status_code, details, body.get("debug_id"))
         return body
 
     @staticmethod

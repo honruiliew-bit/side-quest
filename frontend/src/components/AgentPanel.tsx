@@ -37,6 +37,7 @@ export function AgentPanel({ q, onChange }: { q: QuestDetail; onChange: (q: Ques
   const [text, setText] = useState("");
   const [thinking, setThinking] = useState(false);
   const [optimistic, setOptimistic] = useState<string | null>(null);
+  const [deciding, setDeciding] = useState<string | null>(null);
   const box = useRef<HTMLDivElement>(null);
   const isHost = q.viewer.role === "host";
   const pending = q.proposals.filter((p) => p.status === "pending");
@@ -66,6 +67,8 @@ export function AgentPanel({ q, onChange }: { q: QuestDetail; onChange: (q: Ques
   };
 
   const decide = async (p: Proposal, approve: boolean) => {
+    if (deciding) return;
+    setDeciding(p.id);
     try {
       const detail = await api<QuestDetail>(`/proposals/${p.id}/decide`, { method: "POST", json: { approve } });
       onChange(detail);
@@ -74,6 +77,8 @@ export function AgentPanel({ q, onChange }: { q: QuestDetail; onChange: (q: Ques
       else toast(approve ? "Approved. Done on PayPal." : "Declined.", approve ? "money" : "info");
     } catch (e) {
       toast(e instanceof Error ? e.message : "That didn't work.", "error");
+    } finally {
+      setDeciding(null);
     }
   };
 
@@ -112,8 +117,10 @@ export function AgentPanel({ q, onChange }: { q: QuestDetail; onChange: (q: Ques
             </div>
             {isHost && (
               <div className="flex flex-wrap gap-2">
-                <button className="btn btn-ink btn-sm" onClick={() => decide(p, true)}>Approve and run</button>
-                <button className="btn btn-ghost btn-sm" onClick={() => decide(p, false)}>Decline</button>
+                <button className="btn btn-ink btn-sm" disabled={!!deciding} onClick={() => decide(p, true)}>
+                  {deciding === p.id ? "Running on PayPal" : "Approve and run"}
+                </button>
+                <button className="btn btn-ghost btn-sm" disabled={!!deciding} onClick={() => decide(p, false)}>Decline</button>
               </div>
             )}
           </div>
@@ -167,7 +174,7 @@ export function AgentPanel({ q, onChange }: { q: QuestDetail; onChange: (q: Ques
               <li key={p.id} className="flex justify-between gap-3">
                 <span>{p.title}</span>
                 <span className={p.status === "executed" ? "font-semibold text-money" : "text-muted"}>
-                  {p.status === "executed" ? "Done on PayPal" : p.status === "failed" ? "Stopped" : "Declined"}
+                  {p.status === "executed" ? "Done on PayPal" : p.status === "failed" ? "Stopped" : p.status === "expired" ? "No longer needed" : "Declined"}
                 </span>
               </li>
             ))}

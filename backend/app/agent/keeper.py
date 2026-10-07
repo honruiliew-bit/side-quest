@@ -109,8 +109,12 @@ def _handler(db: Session, quest: Quest, speaker: User):
             outcome = engine.leave(db, m)
             if outcome.get("done"):
                 return {"result": f"Released. {speaker.name}'s {fmt(m.hold_cents)} hold was voided on PayPal."}
-            return {"result": "The quest is locked, so a proposal was sent to the host.", "proposal_id": outcome.get("proposal_id")}
+            return {"result": ("The quest is locked, so a swap or refund proposal was already sent to the host. "
+                               "Do not call propose_money_actions for this dropout."),
+                    "proposal_id": outcome.get("proposal_id")}
         if name == "propose_money_actions":
+            if speaker.id != quest.host_id and not engine.membership_for(quest, speaker.id):
+                raise PermissionError("Only the host or people on this quest can ask for money changes.")
             p = engine.create_proposal(db, quest, args["title"], args["rationale"], args.get("actions", []))
             return {"result": "Sent to the host for approval.", "proposal_id": p.id}
         if name == "add_stop_note":

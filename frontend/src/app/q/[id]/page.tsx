@@ -10,6 +10,7 @@ import { MoneyLog } from "@/components/MoneyLog";
 import { MoneyRoute } from "@/components/MoneyRoute";
 import { QuestHero } from "@/components/QuestHero";
 import { SeatMap } from "@/components/SeatMap";
+import { TourPanel } from "@/components/TourPanel";
 import { api, ApiError } from "@/lib/api";
 import { money } from "@/lib/format";
 import { useSession } from "@/lib/session";
@@ -98,7 +99,7 @@ export default function QuestPage({ params }: { params: { id: string } }) {
         </div>
         <MoneyLog q={q} />
       </main>
-      <DemoDock q={q} onChange={accept} />
+      {q.tour ? <TourPanel q={q} onChange={accept} /> : <DemoDock q={q} onChange={accept} />}
     </>
   );
 }

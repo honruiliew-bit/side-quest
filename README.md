@@ -23,7 +23,7 @@ Most group payments collect money first and sort out refunds later. Sidequest us
 | Invoicing, through the **PayPal Agent Toolkit** | Billing each person when costs come in over. |
 | PayPal Agent Toolkit, adapted for Claude | The quest agent can call `get_order_details` and `get_invoice`. |
 | Webhooks with signature verification | `CHECKOUT.ORDER.APPROVED` places holds for link-based approvals. Capture, void, refund and payout events confirm the money log. |
-| JS SDK Smart Buttons | PayPal, Venmo and Pay Later, with `intent=authorize`. |
+| JS SDK Smart Buttons | PayPal, Venmo and cards, with `intent=authorize`. Pay Later is turned off because installments can't be held. |
 
 And for agentic commerce: **Sidequest is an MCP server.** Claude, ChatGPT or any MCP client can find quests and start a hold. The person approves the hold on PayPal's own page, so an agent can commit you to a plan but can never spend without you.
 
@@ -60,6 +60,15 @@ The agent never moves money on its own. It has five tools of its own plus two re
 - `add_stop_note` saves answers to the plan.
 
 Every proposal is re-validated by the engine at approval time. A capture can never exceed the authorization, and a refund can never exceed what was captured. Member messages are treated as data, so one person can't talk the agent into moving someone else's money.
+
+## Quality
+
+- **Every money move is serialized per quest.** Two people can't take the same seat, and a webhook and a click can't authorize the same order twice.
+- **Each approval runs once.** Proposals are claimed atomically, and duplicates collapse into one card.
+- **No money for closed quests.** If a quest closes while someone is on PayPal's approval page, their order is never authorized.
+- **Holds fit PayPal's window.** Join deadlines must be within 28 days, because authorizations last 29. Holds older than 3 days are reauthorized before capture.
+- **Agent limits.** Chat is rate limited. Only the host and people on a quest can trigger money proposals.
+- **CI** runs 19 backend tests (money lifecycle, races, closed quests, migrations, webhooks, MCP, and the Claude tool loop through the real SDK) plus frontend type checks, lint and a production build.
 
 ## Run it locally (no keys needed)
 
@@ -102,6 +111,10 @@ Add a webhook in your sandbox app pointing to `https://<your-api>/webhooks/paypa
 
 Set the webhook's ID as `PAYPAL_WEBHOOK_ID`. Each event is verified with PayPal's `verify-webhook-signature` endpoint and stored once.
 
+### Judge access
+
+Set `DEMO_BUYER_EMAIL` and `DEMO_BUYER_PASSWORD` to a sandbox personal account. The guided tour shows them in step 1, so judges can approve holds. They only appear in sandbox mode with `DEMO_MODE=1`, and they are sandbox test credentials, never live ones.
+
 ## Turn on Claude
 
 Set `ANTHROPIC_API_KEY` in `backend/.env`. The quest builder then uses a forced `draft_quest` tool call, and the quest agent runs a full tool-use loop. `ANTHROPIC_MODEL` defaults to `claude-sonnet-5-5`.
@@ -118,20 +131,31 @@ To deploy the frontend on Vercel instead, import the repo with root directory `f
 
 Keep `DEMO_MODE=1` for judging. It turns on one-click personas and the demo controls.
 
-## For judges: a two minute tour
+## For judges: the two minute tour
 
-1. Open the hero quest, **Apple picking and cider**. You start as **Leo**. Four of five people are in.
-2. Click **Hold $81.00 with PayPal** and approve. Seat 5 fills, the board flips to **IT'S ON**, and the money route moves to *Quest tips*.
-3. Switch to **Hon** (top right). Hon is the host. Click **Lock and charge everyone**. Every hold is captured at the final split.
-4. Open **Breakneck Ridge**. It's locked, and Leo is on standby. Switch to **Dev** and tell the agent "I can't make it anymore". Switch to **Ana**, the host, and approve the swap. Leo is charged, Dev is refunded, and every PayPal call shows up in the money log.
-5. As Ana, use **Settle up** with a higher total. Sidequest drafts a PayPal invoice for each person through the Agent Toolkit. Approve them, then click **Trip done** to pay yourself out.
-6. Use **Demo controls** (bottom left) to add people or jump to a deadline on any quest.
+Click **Take the 2-minute tour** on the home page. You get a private copy of the hero quest, so your clicks never collide with another judge's, and a checklist that walks the full PayPal lifecycle:
+
+1. **Hold your spot** as Leo with the real PayPal button. Seat 5 fills and the quest tips.
+2. **Fill the van.** Everyone's share drops from $81.00 to $67.29.
+3. **Lock and charge** as Hon, the host. PayPal captures every hold at the final split.
+4. **Drop out after paying** as Dev. The agent turns it into a swap request for the host.
+5. **Approve the swap.** The standby hold is captured and Dev is refunded.
+6. **Settle up.** Gas came in over, so each person gets a PayPal invoice through the Agent Toolkit.
+7. **Pay the host** through PayPal Payouts.
+
+Each step switches to the right person for you. The PayPal sandbox buyer login is shown inside step 1. The money log on the quest page lists every PayPal call with its ID.
+
+Other things to try:
+- Open any quest from **Departures** to see the invite page a new person gets before joining.
+- On **For AI agents**, call the MCP tools from the browser and get a PayPal approval link back.
+- Use **Demo controls** on the other quests to add people or jump to a deadline.
 
 ## Tests
 
 ```bash
 cd backend
 python -m pytest tests/test_flow.py        # full money lifecycle, webhooks, MCP
+python -m pytest tests/test_qa.py          # races, closed quests, resets, limits, migrations
 python -m pytest tests/test_agent_wire.py  # Claude tool loop through the real SDK, on a fake transport
 ```
 
@@ -151,7 +175,7 @@ backend/
   app/pricing.py          The split
   scripts/check_sandbox.py
 frontend/
-  src/app/                Departures, quest page, builder, holds, agents
+  src/app/                Departures, invite page, quest page, builder, holds, agents
   src/components/         Ticket, departure board, seat map, money route, agent panel
 ```
 

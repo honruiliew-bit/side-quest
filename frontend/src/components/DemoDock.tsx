@@ -1,5 +1,6 @@
 "use client";
 
+import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { api } from "@/lib/api";
 import { useSession } from "@/lib/session";
@@ -8,6 +9,7 @@ import type { QuestDetail } from "@/lib/types";
 /** Judges can't recruit five friends. This adds simulated people and moves the clock. */
 export function DemoDock({ q, onChange }: { q: QuestDetail; onChange: (q: QuestDetail) => void }) {
   const { config, toast } = useSession();
+  const router = useRouter();
   const [open, setOpen] = useState(false);
   const [busy, setBusy] = useState<string | null>(null);
   if (!config?.demo_mode) return null;
@@ -51,6 +53,20 @@ export function DemoDock({ q, onChange }: { q: QuestDetail; onChange: (q: QuestD
             <button className="btn btn-ghost btn-sm" disabled={!open_ || !!busy}
               onClick={() => run("deadline", `/demo/quests/${q.id}/deadline`, {}, "Jumped to the join deadline.")}>
               {busy === "deadline" ? "Moving the clock" : "Jump to the join deadline"}
+            </button>
+            <button className="btn btn-ghost btn-sm" disabled={!!busy}
+              onClick={async () => {
+                setBusy("reset");
+                try {
+                  await api("/demo/reset", { method: "POST" });
+                  toast("Demo data reset.");
+                  router.push("/");
+                } catch (e) {
+                  toast(e instanceof Error ? e.message : "Reset failed.", "error");
+                  setBusy(null);
+                }
+              }}>
+              {busy === "reset" ? "Resetting" : "Reset all demo data"}
             </button>
           </div>
         </div>

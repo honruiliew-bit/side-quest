@@ -11,8 +11,9 @@ import { MockPayPalSheet } from "./MockPayPalSheet";
 type HoldStart = { membership_id: string; order_id: string; approve_url: string | null; hold_cents: number };
 
 /**
- * Sandbox: PayPal's own Smart Buttons (PayPal, Venmo and Pay Later when eligible) with intent=authorize.
- * Mock: the same three choices, approved in a clearly labelled mock sheet.
+ * Sandbox: PayPal's own Smart Buttons (PayPal, Venmo when eligible, cards) with intent=authorize.
+ * Pay Later is turned off because installment plans can't be authorized now and captured later.
+ * Mock: the same choices, approved in a clearly labelled mock sheet.
  */
 export function HoldButton({ q, onDone }: { q: QuestDetail; onDone: (q: QuestDetail) => void }) {
   const { config, user, toast } = useSession();
@@ -49,7 +50,9 @@ export function HoldButton({ q, onDone }: { q: QuestDetail; onDone: (q: QuestDet
             intent: "authorize",
             currency: q.currency,
             components: "buttons",
-            enableFunding: "venmo,paylater",
+            enableFunding: "venmo",
+            // Pay Later is an installment loan and can't be held then captured later.
+            disableFunding: "paylater,credit",
           }}
         >
           <PayPalButtons
@@ -94,7 +97,7 @@ export function HoldButton({ q, onDone }: { q: QuestDetail; onDone: (q: QuestDet
       </button>
       <div className="flex gap-2">
         <button className="btn btn-ghost-money btn-sm flex-1" disabled={busy} onClick={() => begin("Venmo")}>Venmo</button>
-        <button className="btn btn-ghost-money btn-sm flex-1" disabled={busy} onClick={() => begin("Pay Later")}>Pay Later</button>
+        <button className="btn btn-ghost-money btn-sm flex-1" disabled={busy} onClick={() => begin("a card")}>Debit or credit card</button>
       </div>
       {pending && (
         <MockPayPalSheet

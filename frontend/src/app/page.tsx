@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import { LineBullet } from "@/components/Avatar";
 import { Board } from "@/components/Board";
@@ -10,8 +11,22 @@ import { useSession } from "@/lib/session";
 import type { QuestCard } from "@/lib/types";
 
 export default function Home() {
-  const { ready, toast } = useSession();
+  const { ready, toast, config, signInAs } = useSession();
+  const router = useRouter();
   const [quests, setQuests] = useState<QuestCard[] | null>(null);
+  const [starting, setStarting] = useState(false);
+
+  const startTour = async () => {
+    setStarting(true);
+    try {
+      const { id } = await api<{ id: string }>("/demo/tour", { method: "POST" });
+      await signInAs("leo");
+      router.push(`/q/${id}`);
+    } catch (e) {
+      toast(e instanceof Error ? e.message : "Couldn't start the demo.", "error");
+      setStarting(false);
+    }
+  };
 
   useEffect(() => {
     if (!ready) return;
@@ -24,8 +39,9 @@ export default function Home() {
     return () => window.clearInterval(t);
   }, [ready, toast]);
 
-  const upcoming = (quests ?? []).filter((q) => ["open", "on", "locked"].includes(q.status));
-  const arrived = (quests ?? []).filter((q) => q.status === "completed");
+  const listed = (quests ?? []).filter((q) => !q.tour);
+  const upcoming = listed.filter((q) => ["open", "on", "locked"].includes(q.status));
+  const arrived = listed.filter((q) => q.status === "completed");
 
   return (
     <>
@@ -39,9 +55,16 @@ export default function Home() {
                 Hold your spot with PayPal. Nobody pays unless the quest runs, and every extra person lowers everyone's share.
               </p>
               <div className="flex flex-wrap gap-3">
-                <Link href="/new" className="btn btn-ink">Start a quest</Link>
-                <a href="#departures" className="btn btn-ghost">See departures</a>
+                {config?.demo_mode && (
+                  <button className="btn btn-ink" onClick={startTour} disabled={starting}>
+                    {starting ? "Setting up your quest" : "Take the 2-minute tour"}
+                  </button>
+                )}
+                <Link href="/new" className={`btn ${config?.demo_mode ? "btn-ghost" : "btn-ink"}`}>Start a quest</Link>
               </div>
+              {config?.demo_mode && (
+                <p className="text-[14px]">The tour gives you a private quest and walks you through every PayPal step.</p>
+              )}
             </div>
             <Board text="NOW BOARDING" size="lg" label="Now boarding" />
           </div>
@@ -81,7 +104,7 @@ export default function Home() {
                         </span>
                       </td>
                       <td className="px-3 py-4 align-middle">
-                        <Link href={`/q/${q.id}`} className="text-[19px] font-bold leading-tight text-stock no-underline group-hover:text-signal" style={{ fontStretch: "80%" }}>
+                        <Link href={`/join/${q.id}`} className="text-[19px] font-bold leading-tight text-stock no-underline group-hover:text-signal" style={{ fontStretch: "80%" }}>
                           {q.title}
                         </Link>
                         <div className="text-[13px] text-stock/70">{q.area}, hosted by {q.host.name}</div>

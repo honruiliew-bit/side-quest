@@ -41,6 +41,10 @@ class Settings:
     demo_card_number: str = os.getenv("DEMO_CARD_NUMBER", "")
     demo_card_expiry: str = os.getenv("DEMO_CARD_EXPIRY", "2030-12")
     demo_card_cvv: str = os.getenv("DEMO_CARD_CVV", "123")
+    # Shown to judges inside the guided demo so they can approve sandbox holds. Sandbox only, never live.
+    demo_buyer_email: str = os.getenv("DEMO_BUYER_EMAIL", "")
+    demo_buyer_password: str = os.getenv("DEMO_BUYER_PASSWORD", "")
+    chat_per_minute: int = int(os.getenv("CHAT_PER_MINUTE", "8"))
 
     # Money
     currency: str = os.getenv("CURRENCY", "USD")
