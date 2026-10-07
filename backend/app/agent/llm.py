@@ -73,16 +73,39 @@ def run_with_tools(
     return "I ran out of steps on that one. Try asking again more simply.", calls
 
 
-def forced_tool(system: str, prompt: str, tool: dict, max_tokens: int = 2500) -> dict:
-    resp = client().messages.create(
+# Some models reject a forced tool_choice. Learn that once, then ask for the tool in the prompt instead.
+_forced_ok = True
+
+
+def call_tool(system: str, content, tool: dict, max_tokens: int = 2500) -> dict:
+    """Get structured output by having the model call one tool. Works with or without forced tool_choice."""
+    global _forced_ok
+    from anthropic import BadRequestError
+
+    name = tool["name"]
+    base = dict(
         model=settings.anthropic_model,
         max_tokens=max_tokens,
-        system=system,
-        messages=[{"role": "user", "content": prompt}],
+        system=f"{system}\n\nRespond only by calling the {name} tool.",
+        messages=[{"role": "user", "content": content}],
         tools=[tool],
-        tool_choice={"type": "tool", "name": tool["name"]},
     )
+    resp = None
+    if _forced_ok:
+        try:
+            resp = client().messages.create(**base, tool_choice={"type": "tool", "name": name})
+        except BadRequestError as exc:
+            if "tool_choice" not in str(exc):
+                raise
+            _forced_ok = False
+            log.info("model doesn't support forced tool_choice; using auto from now on")
+    if resp is None:
+        resp = client().messages.create(**base, tool_choice={"type": "auto"})
     for block in resp.content:
-        if getattr(block, "type", "") == "tool_use":
+        if getattr(block, "type", "") == "tool_use" and block.name == name:
             return dict(block.input)
-    raise RuntimeError("The model did not return a draft.")
+    raise RuntimeError(f"The model answered without calling {name}.")
+
+
+def forced_tool(system: str, prompt: str, tool: dict, max_tokens: int = 2500) -> dict:
+    return call_tool(system, prompt, tool, max_tokens)

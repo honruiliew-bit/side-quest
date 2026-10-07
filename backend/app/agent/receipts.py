@@ -50,25 +50,10 @@ def read(quest: Quest, data: bytes, media_type: str) -> dict | None:
     """Returns Claude's reading, or None when the AI is off."""
     if not llm.enabled():
         return None
-    from ..config import settings
-
     shared = ", ".join(f"{l['label']} (estimated ${l['cents'] / 100:.2f})" for l in quest.cost_lines if l.get("split") == "shared")
-    resp = llm.client().messages.create(
-        model=settings.anthropic_model,
-        max_tokens=800,
-        system=SYSTEM,
-        tools=[_tool(quest)],
-        tool_choice={"type": "tool", "name": "read_receipt"},
-        messages=[{
-            "role": "user",
-            "content": [
-                {"type": "image", "source": {"type": "base64", "media_type": media_type,
-                                             "data": base64.b64encode(data).decode()}},
-                {"type": "text", "text": f"Quest: {quest.title} on {quest.starts_at:%Y-%m-%d}. Shared costs: {shared}."},
-            ],
-        }],
-    )
-    for block in resp.content:
-        if getattr(block, "type", "") == "tool_use":
-            return dict(block.input)
-    return None
+    content = [
+        {"type": "image", "source": {"type": "base64", "media_type": media_type,
+                                     "data": base64.b64encode(data).decode()}},
+        {"type": "text", "text": f"Quest: {quest.title} on {quest.starts_at:%Y-%m-%d}. Shared costs: {shared}."},
+    ]
+    return llm.call_tool(SYSTEM, content, _tool(quest), max_tokens=800)

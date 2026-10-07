@@ -34,9 +34,16 @@ def _msg(content, stop):
 RECEIPT_READS = []
 
 
+REJECT_FORCED = [False]
+
+
 def _handler(request: httpx.Request) -> httpx.Response:
     body = json.loads(request.content)
     REQUESTS.append(body)
+    if REJECT_FORCED[0] and (body.get("tool_choice") or {}).get("type") in {"tool", "any"}:
+        return httpx.Response(400, json={"type": "error", "error": {
+            "type": "invalid_request_error",
+            "message": 'tool_choice: type "tool" and "any" are not supported for this model.'}})
     tools = {t["name"] for t in body.get("tools", [])}
     if "read_receipt" in tools:
         RECEIPT_READS.append(body)
@@ -123,3 +130,27 @@ def test_receipts_are_read_by_claude_and_checked():
     image_block = RECEIPT_READS[0]["messages"][0]["content"][0]
     assert image_block["type"] == "image" and image_block["source"]["media_type"] == "image/png"
     assert RECEIPT_READS[0]["tool_choice"] == {"type": "tool", "name": "read_receipt"}
+
+
+def test_models_without_forced_tool_choice_still_work():
+    """Reproduces claude-sonnet-5-5 rejecting tool_choice type tool: the call retries with auto and remembers."""
+    from app import engine
+    from app.models import Quest, User
+
+    REJECT_FORCED[0] = True
+    llm._forced_ok = True
+    RECEIPT_READS.clear()
+    RECEIPT_READS_ANSWERS[:] = [{"is_receipt": True, "legible": True, "merchant": "Route 9 Fuel", "date": None,
+                                 "total_usd": 95.0, "category": "fuel", "cost_line": "Gas and tolls", "concerns": []}]
+    before = len(REQUESTS)
+    d = builder.draft("sunrise kayak on the hudson for 5")
+    assert d["source"] == "claude"
+    kinds = [(r.get("tool_choice") or {}).get("type") for r in REQUESTS[before:]]
+    assert kinds == ["tool", "auto"]  # one rejected attempt, then auto
+    assert llm._forced_ok is False
+    with session_scope() as db:
+        q = db.scalar(select(Quest).where(Quest.line_code == "RI"))
+        r = engine.add_receipt(db, q, db.get(User, q.host_id), "gas2.png", "image/png", b"\x89PNGagain")
+        assert r.reader == "claude" and r.total_cents == 9500
+    assert (REQUESTS[-1].get("tool_choice") or {}).get("type") == "auto"  # no second rejected attempt
+    REJECT_FORCED[0] = False
