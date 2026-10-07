@@ -8,7 +8,10 @@ from contextlib import contextmanager
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
-from fastapi import APIRouter, Depends, Header, HTTPException, Request
+import base64
+import binascii
+
+from fastapi import APIRouter, Depends, Header, HTTPException, Request, Response
 from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -18,7 +21,7 @@ from .agent import builder, keeper
 from .auth import PERSONAS, ensure_personas, get_or_create_user, issue_token, optional_user, require_user
 from .config import settings
 from .db import get_db
-from .models import Membership, Proposal, Quest, User, WebhookEvent, utcnow
+from .models import Membership, Proposal, Quest, Receipt, User, WebhookEvent, utcnow
 from .paypal.gateway import PayPalError, gateway_for, paypal_mode
 from .views import membership_out, quest_card, quest_detail, user_out
 
@@ -299,7 +302,11 @@ def lock(quest_id: str, user: User = Depends(require_user), db: Session = Depend
 def complete(quest_id: str, user: User = Depends(require_user), db: Session = Depends(get_db)):
     with locked(db, quest_id) as q:
         _host_only(q, user)
-        engine.complete(db, q)
+        due = engine.payout_due_at(q)
+        if utcnow() < due:
+            raise HTTPException(409, f"Your payout releases on its own at {due.astimezone(ZoneInfo(q.tz)):%a %b %d, %I:%M %p}, "
+                                     f"{settings.payout_hold_hours} hours after the trip, unless someone reports a problem.")
+        engine.complete(db, q, reason=f"{user.name} released the payout after the trip.")
     return _detail(db, q, user)
 
 
@@ -312,7 +319,7 @@ def cancel(quest_id: str, user: User = Depends(require_user), db: Session = Depe
 
 
 class SettleIn(BaseModel):
-    actual_shared_cents: int = Field(ge=0, le=5_000_000)
+    actual_shared_cents: int | None = Field(default=None, ge=0, le=5_000_000)
     note: str = Field(default="", max_length=300)
 
 
@@ -321,6 +328,75 @@ def settle(quest_id: str, body: SettleIn, user: User = Depends(require_user), db
     with locked(db, quest_id) as q:
         _host_only(q, user)
         engine.propose_settle_up(db, q, body.actual_shared_cents, body.note)
+    return _detail(db, q, user)
+
+
+class ReceiptIn(BaseModel):
+    filename: str = Field(default="receipt", max_length=200)
+    media_type: str = Field(max_length=40)
+    data_base64: str = Field(max_length=7_500_000)
+    total_cents: int | None = Field(default=None, ge=1, le=5_000_000)
+    cost_line: str | None = Field(default=None, max_length=80)
+
+
+@router.post("/quests/{quest_id}/receipts")
+def add_receipt(quest_id: str, body: ReceiptIn, user: User = Depends(require_user), db: Session = Depends(get_db)):
+    try:
+        data = base64.b64decode(body.data_base64.split(",")[-1], validate=True)
+    except (binascii.Error, ValueError):
+        raise HTTPException(422, "That file didn't upload correctly. Try again.")
+    q = _quest(db, quest_id)
+    _host_only(q, user)
+    if body.media_type not in engine.RECEIPT_TYPES or len(data) > engine.RECEIPT_MAX_BYTES:
+        raise HTTPException(422, "Upload a JPG, PNG, WebP or GIF under 5 MB.")
+    # Reading the receipt takes a few seconds. Do it outside the quest lock, then store under it.
+    reading = engine.read_receipt(q, data, body.media_type)
+    with locked(db, quest_id) as q:
+        r = engine.add_receipt(db, q, user, body.filename, body.media_type, data, body.total_cents,
+                               pre_read=reading, host_cost_line=body.cost_line)
+        out = engine.receipt_out(r)
+    return {"receipt": out, "quest": _detail(db, q, user)}
+
+
+@router.get("/receipts/{receipt_id}/image")
+def receipt_image(receipt_id: str, db: Session = Depends(get_db)):
+    r = db.get(Receipt, receipt_id)
+    if not r or r.status == "removed":
+        raise HTTPException(404, "No receipt here.")
+    return Response(content=r.data, media_type=r.media_type, headers={"Cache-Control": "private, max-age=3600"})
+
+
+@router.delete("/receipts/{receipt_id}")
+def remove_receipt(receipt_id: str, user: User = Depends(require_user), db: Session = Depends(get_db)):
+    r = db.get(Receipt, receipt_id)
+    if not r:
+        raise HTTPException(404, "No receipt here.")
+    with locked(db, r.quest_id) as q:
+        _host_only(q, user)
+        engine.remove_receipt(db, db.get(Receipt, receipt_id))
+    return _detail(db, q, user)
+
+
+class ProblemIn(BaseModel):
+    reason: str = Field(min_length=3, max_length=280)
+
+
+@router.post("/quests/{quest_id}/problem")
+def report_problem(quest_id: str, body: ProblemIn, user: User = Depends(require_user), db: Session = Depends(get_db)):
+    with locked(db, quest_id) as q:
+        engine.report_problem(db, q, user, body.reason)
+    return _detail(db, q, user)
+
+
+class ResolveIn(BaseModel):
+    note: str = Field(default="", max_length=280)
+
+
+@router.post("/quests/{quest_id}/problem/resolve")
+def resolve_problem(quest_id: str, body: ResolveIn, user: User = Depends(require_user), db: Session = Depends(get_db)):
+    with locked(db, quest_id) as q:
+        _host_only(q, user)
+        engine.resolve_problem(db, q, body.note)
     return _detail(db, q, user)
 
 
@@ -348,8 +424,9 @@ class ChatIn(BaseModel):
 @router.post("/quests/{quest_id}/chat")
 def chat(quest_id: str, body: ChatIn, user: User = Depends(require_user), db: Session = Depends(get_db)):
     _rate_limit_chat(user.id)
-    with locked(db, quest_id) as q:
-        reply = keeper.reply(db, q, user, body.text.strip())
+    q = _quest(db, quest_id)
+    reply = keeper.reply(db, q, user, body.text.strip())
+    db.commit()
     return {"reply": reply, "quest": _detail(db, q, user)}
 
 
@@ -454,6 +531,15 @@ def demo_deadline(quest_id: str, user: User | None = Depends(optional_user), db:
         q.join_by = utcnow() - timedelta(seconds=1)
     engine.tick(db)
     q = _quest(db, quest_id)
+    return _detail(db, q, user)
+
+
+@router.post("/demo/quests/{quest_id}/payout")
+def demo_payout(quest_id: str, user: User | None = Depends(optional_user), db: Session = Depends(get_db)):
+    """The real payout waits 24 hours after the trip. The demo skips the wait, never the checks."""
+    _demo_only()
+    with locked(db, quest_id) as q:
+        engine.complete(db, q, reason="Demo: skipped the wait after the trip. Nobody reported a problem.")
     return _detail(db, q, user)
 
 

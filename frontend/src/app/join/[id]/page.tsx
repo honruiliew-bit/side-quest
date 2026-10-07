@@ -198,13 +198,29 @@ export default function JoinPage({ params }: { params: { id: string } }) {
         <div className="grid gap-6 md:grid-cols-2">
           <section aria-labelledby="cov-h" className="panel flex flex-col gap-3 p-6">
             <h2 id="cov-h" className="h3">Covered by your share</h2>
-            <ul className="flex flex-col gap-2 text-[16px]">
+            <ul className="tab flex flex-col text-[16px]">
               {covered.map((c) => (
-                <li key={c.label} className="flex justify-between gap-4">
+                <li key={c.label} className="flex items-start justify-between gap-4 border-b border-rule py-3 first:pt-0">
                   <span>{c.label}</span>
-                  <span className="text-[14px] text-muted">{c.split === "shared" ? "split by the group" : "each"}</span>
+                  <span className="text-right">
+                    <span className="block font-semibold">
+                      {c.split === "shared" ? `${money(Math.ceil(c.cents / q.min_people))} each` : `${money(c.cents)} each`}
+                    </span>
+                    <span className="block text-[13px] text-muted">
+                      {c.split === "shared"
+                        ? `${money(c.cents)} split by the group, ${money(Math.ceil(c.cents / q.max_people))} if full`
+                        : "same for everyone"}
+                    </span>
+                  </span>
                 </li>
               ))}
+              <li className="flex items-start justify-between gap-4 pt-3">
+                <span className="font-bold">Your share</span>
+                <span className="text-right">
+                  <span className="block font-bold text-money">Up to {money(q.hold_cents)}</span>
+                  <span className="block text-[13px] text-muted">{money(lowest)} if all {q.max_people} seats fill</span>
+                </span>
+              </li>
             </ul>
           </section>
           <section aria-labelledby="own-h" className="panel flex flex-col gap-3 p-6">

@@ -19,8 +19,8 @@ Most group payments collect money first and sort out refunds later. Sidequest us
 | Void authorization | Leaving before lock, quests that never tip, and standby holds after the trip. |
 | Reauthorize | Holds older than the 3 day honor period are reauthorized before capture. |
 | Refund capture (partial) | Dropout swaps after lock, and refunds when costs come in under. |
-| Payouts v1 | Paying the host after the trip. |
-| Invoicing, through the **PayPal Agent Toolkit** | Billing each person when costs come in over. |
+| Payouts v1 | Paying the host automatically 24 hours after the trip, unless a member reports a problem. |
+| Invoicing, through the **PayPal Agent Toolkit** | Billing each person when costs come in over, with the receipts behind the charge linked on the invoice. |
 | PayPal Agent Toolkit, adapted for Claude | The quest agent can call `get_order_details` and `get_invoice`. |
 | Webhooks with signature verification | `CHECKOUT.ORDER.APPROVED` places holds for link-based approvals. Capture, void, refund and payout events confirm the money log. |
 | JS SDK Smart Buttons | PayPal, Venmo and cards, with `intent=authorize`. Pay Later is turned off because installments can't be held. |
@@ -49,6 +49,18 @@ sequenceDiagram
   H->>S: Trip done
   S->>P: Payout to host
 ```
+
+### The host is paid by escrow, not by trust
+
+Members' money is captured when the quest locks, so nobody can refuse to pay. The opposite risk is the host taking the money and not running the trip, so:
+
+- The payout releases on its own **24 hours after the trip ends** (`PAYOUT_HOLD_HOURS`). The host can't pull it early.
+- Any member who paid can **report a problem**, by button or by telling the agent. That pauses the payout until the host resolves it.
+- A payout also waits while any money change is pending the host's approval.
+
+### Settle up runs on receipts
+
+After the trip, the host adds receipt photos. Claude reads each one (merchant, date, total, and which shared cost it pays for) with a forced tool call, and the engine runs checks that don't depend on the model: duplicate images are rejected, dates outside the trip and totals far above the estimate are flagged, and anything that isn't a receipt is rejected. The settle-up is computed from the receipts: lines with receipts cost what the receipts add up to, and the rest keep their estimate. Members see the receipts on the approval card, and each PayPal invoice includes the receipt details and a link to the image.
 
 ### The agent's guardrails
 
@@ -140,8 +152,8 @@ Click **Take the 2-minute tour** on the home page. You get a private copy of the
 3. **Lock and charge** as Hon, the host. PayPal captures every hold at the final split.
 4. **Drop out after paying** as Dev. The agent turns it into a swap request for the host.
 5. **Approve the swap.** The standby hold is captured and Dev is refunded.
-6. **Settle up.** Gas came in over, so each person gets a PayPal invoice through the Agent Toolkit.
-7. **Pay the host** through PayPal Payouts.
+6. **Settle up with receipts.** Add the sample gas receipt. Claude reads it, and each person gets a PayPal invoice for the overage with the receipt linked.
+7. **Pay the host.** In real use this releases on its own 24 hours after the trip. The demo skips the wait.
 
 Each step switches to the right person for you. The PayPal sandbox buyer login is shown inside step 1. The money log on the quest page lists every PayPal call with its ID.
 

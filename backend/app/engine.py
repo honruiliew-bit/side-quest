@@ -27,7 +27,7 @@ from sqlalchemy import func, select, update
 from sqlalchemy.orm import Session
 
 from .config import settings
-from .models import LedgerEntry, Membership, Message, Proposal, Quest, User, aware, utcnow
+from .models import LedgerEntry, Membership, Message, Proposal, Quest, Receipt, User, aware, utcnow
 from .paypal.gateway import PayPalError, gateway_for, paypal_mode
 from .paypal import toolkit
 from .pricing import fmt, hold_cents, price_cents
@@ -386,10 +386,56 @@ def lock(db: Session, quest: Quest, reason: str = "The host locked the quest.") 
     return {"share_cents": share, "charged": len(charged), "failed": len(failed)}
 
 
-def complete(db: Session, quest: Quest) -> dict:
-    """After the trip: release standby holds and pay the host through PayPal Payouts."""
+def trip_ends_at(quest: Quest) -> datetime:
+    return aware(quest.ends_at) or aware(quest.starts_at) + timedelta(hours=12)
+
+
+def payout_due_at(quest: Quest) -> datetime:
+    """Money sits with Sidequest until this time, so members can report a problem first."""
+    return trip_ends_at(quest) + timedelta(hours=settings.payout_hold_hours)
+
+
+def payout_blocker(db: Session, quest: Quest) -> str | None:
     if quest.status != "locked":
-        raise QuestError("Only a locked quest can be completed.")
+        return "Only a locked quest can pay out."
+    if quest.payout_paused_reason:
+        return f"The payout is paused: {quest.payout_paused_reason}"
+    if db.scalar(select(func.count(Proposal.id)).where(Proposal.quest_id == quest.id, Proposal.status == "pending")):
+        return "There's a money change waiting for the host's approval."
+    return None
+
+
+def report_problem(db: Session, quest: Quest, user: User, reason: str) -> None:
+    """Any member who paid can pause the payout. The host has to resolve it before money moves."""
+    if quest.status != "locked":
+        raise QuestError("You can report a problem after the quest is charged and before the host is paid.")
+    m = membership_for(quest, user.id)
+    if user.id != quest.host_id and not (m and m.status == "charged"):
+        raise QuestError("Only people who paid for this quest can pause the payout.", 403)
+    reason = reason.strip()[:280] or "No reason given"
+    quest.payout_paused_reason = f"{user.name}: {reason}"
+    quest.payout_paused_by = user.id
+    say(db, quest, f"{user.name} reported a problem: {reason}. The host's payout is paused until it's resolved.",
+        meta={"event": "problem"})
+    db.flush()
+
+
+def resolve_problem(db: Session, quest: Quest, note: str = "") -> None:
+    if not quest.payout_paused_reason:
+        raise QuestError("There's no open problem on this quest.")
+    quest.payout_paused_reason = None
+    quest.payout_paused_by = None
+    tail = f" {note.strip()}" if note.strip() else ""
+    say(db, quest, f"{quest.host.name} resolved the problem.{tail} The payout is back on schedule.",
+        meta={"event": "resolved"})
+    db.flush()
+
+
+def complete(db: Session, quest: Quest, reason: str = "The trip is over and nobody reported a problem.") -> dict:
+    """After the dispute window: release standby holds and pay the host through PayPal Payouts."""
+    blocker = payout_blocker(db, quest)
+    if blocker:
+        raise QuestError(blocker, 409)
     for m in standby(quest):
         release(db, m, note="Trip happened, standby hold released")
     net = sum(m.charged_cents - m.refunded_cents for m in quest.memberships)
@@ -406,7 +452,7 @@ def complete(db: Session, quest: Quest) -> dict:
         provider=gw.name, note=f"Paid to {receiver}", raw=result.raw)
     quest.status = "completed"
     quest.completed_at = utcnow()
-    say(db, quest, f"Trip complete. {fmt(payout_cents)} paid out to {quest.host.name} through PayPal Payouts.",
+    say(db, quest, f"{reason} {fmt(payout_cents)} paid out to {quest.host.name} through PayPal Payouts.",
         meta={"event": "completed"})
     db.flush()
     return {"payout_cents": payout_cents, "batch_id": result.batch_id}
@@ -464,13 +510,21 @@ def promote(db: Session, m: Membership) -> None:
     db.flush()
 
 
-def invoice(db: Session, quest: Quest, m: Membership, cents: int, item: str, note: str) -> dict:
-    result = toolkit.create_and_send_invoice(
-        email=m.user.email, name=m.user.name, cents=cents, item=item, note=note, reference=quest.code,
-    )
-    log(db, quest, "invoice", cents, membership=m, ref=result["invoice_id"],
-        provider="toolkit", note=f"Invoice sent to {m.user.name}: {item}")
-    return result
+def _send_invoices(quest: Quest, jobs: list[tuple[Membership, dict]]) -> list[tuple[Membership, dict, dict | Exception]]:
+    """Network only, no database. PayPal calls run in parallel so seven invoices take one round trip, not seven."""
+    from concurrent.futures import ThreadPoolExecutor
+
+    def one(job):
+        m, a = job
+        try:
+            return m, a, toolkit.create_and_send_invoice(
+                email=m.user.email, name=m.user.name, cents=a["cents"], item=a["item"], note=a["note"],
+                reference=quest.code, description=a.get("description"))
+        except Exception as exc:  # recorded per person
+            return m, a, exc
+
+    with ThreadPoolExecutor(max_workers=min(6, max(1, len(jobs)))) as pool:
+        return list(pool.map(one, jobs))
 
 
 ACTION_TYPES = {"void_hold", "promote", "refund", "invoice"}
@@ -551,6 +605,9 @@ def decide_proposal(db: Session, p: Proposal, approve: bool) -> Proposal:
     actions = _validate_actions(db, quest, p.actions)
     by_id = {m.id: m for m in quest.memberships}
     results = []
+    invoice_jobs = [(by_id[a["membership_id"]], {**a, "description": (p.evidence and _evidence_text(p.evidence)) or None})
+                    for a in actions if a["type"] == "invoice"]
+    sent = {m.id: out for m, _, out in _send_invoices(quest, invoice_jobs)} if invoice_jobs else {}
     try:
         for a in actions:
             m = by_id[a["membership_id"]]
@@ -563,7 +620,11 @@ def decide_proposal(db: Session, p: Proposal, approve: bool) -> Proposal:
             elif a["type"] == "refund":
                 refund(db, m, a["cents"], a["note"])
             elif a["type"] == "invoice":
-                invoice(db, quest, m, a["cents"], a["item"], a["note"])
+                out = sent[m.id]
+                if isinstance(out, Exception):
+                    raise QuestError(f"PayPal didn't send {m.user.name}'s invoice: {out}")
+                log(db, quest, "invoice", a["cents"], membership=m, ref=out["invoice_id"],
+                    provider="toolkit", note=f"Invoice sent to {m.user.name}: {a['item']}")
             results.append({"type": a["type"], "name": a["name"], "ok": True})
     except (QuestError, PayPalError, RuntimeError) as exc:
         p.status = "failed"
@@ -591,20 +652,165 @@ def _expire_stale(db: Session, quest: Quest, keep: str) -> None:
     db.flush()
 
 
+def _evidence_text(evidence: list[dict]) -> str:
+    parts = []
+    for r in evidence:
+        parts.append(f"{r.get('cost_line') or 'Cost'}: {r.get('merchant') or 'receipt'}"
+                     f"{', ' + r['purchased_on'] if r.get('purchased_on') else ''}, {fmt(r.get('total_cents') or 0)}. "
+                     f"Receipt: {settings.public_api_url}/receipts/{r['id']}/image")
+    return "Receipts behind this charge. " + " ".join(parts)
+
+
 def _reseat(quest: Quest) -> None:
     for m in seated(quest):
         if m.seat is None:
             m.seat = _free_seat(quest)
 
 
-def propose_settle_up(db: Session, quest: Quest, actual_shared_cents: int, note: str = "") -> Proposal:
-    """After the trip, compare real shared costs with the estimate and settle the difference."""
+RECEIPT_MAX_BYTES = 5 * 1024 * 1024
+RECEIPT_TYPES = {"image/jpeg", "image/png", "image/webp", "image/gif"}
+
+
+def read_receipt(quest: Quest, data: bytes, media_type: str) -> tuple[dict | None, str | None]:
+    """Ask Claude to read a receipt. Slow, so callers run it before taking the quest lock."""
+    from .agent import receipts as reader
+
+    try:
+        return reader.read(quest, data, media_type), None
+    except Exception as exc:  # the AI being down shouldn't block the host
+        return None, f"Couldn't read it automatically ({type(exc).__name__}). Check it by eye."
+
+
+def add_receipt(db: Session, quest: Quest, user: User, filename: str, media_type: str, data: bytes,
+                host_total_cents: int | None = None, pre_read: tuple[dict | None, str | None] | None = None,
+                host_cost_line: str | None = None) -> Receipt:
+    """Store a receipt, have Claude read it, then run checks a careful bookkeeper would run."""
+    import hashlib
+
+    if quest.status not in {"locked", "completed"}:
+        raise QuestError("Add receipts after the quest is charged.")
+    if media_type not in RECEIPT_TYPES:
+        raise QuestError("Upload a photo of the receipt: JPG, PNG, WebP or GIF.")
+    if not data or len(data) > RECEIPT_MAX_BYTES:
+        raise QuestError("Receipts must be under 5 MB.")
+    digest = hashlib.sha256(data).hexdigest()
+    dupe = db.scalar(select(Receipt).where(Receipt.quest_id == quest.id, Receipt.sha256 == digest,
+                                           Receipt.status != "removed"))
+    if dupe:
+        raise QuestError("That receipt was already added.", 409)
+
+    r = Receipt(quest_id=quest.id, uploaded_by=user.id, filename=filename[:200] or "receipt",
+                media_type=media_type, data=data, sha256=digest, issues=[])
+    shared = {l["label"]: int(l["cents"]) for l in quest.cost_lines if l.get("split") == "shared"}
+    reading, read_error = pre_read if pre_read is not None else read_receipt(quest, data, media_type)
+    issues: list[str] = [read_error] if read_error else []
+
+    if reading is None:
+        r.reader = "host"
+        r.total_cents = host_total_cents
+        r.cost_line = host_cost_line if host_cost_line in shared else next(iter(shared), None)
+        if host_total_cents is None:
+            issues.append("Enter the total. Automatic reading is off.")
+        status = "unverified"
+    else:
+        r.reader = "claude"
+        r.merchant = reading.get("merchant") or None
+        r.purchased_on = reading.get("date") or None
+        total = reading.get("total_usd")
+        r.total_cents = int(round(float(total) * 100)) if total is not None else None
+        line = reading.get("cost_line")
+        r.cost_line = line if line in shared else None
+        issues += [str(c) for c in (reading.get("concerns") or []) if str(c).strip()]
+        if not reading.get("is_receipt"):
+            issues.insert(0, "This doesn't look like a receipt.")
+        if not reading.get("legible"):
+            issues.append("The total or date isn't clearly readable.")
+        if r.total_cents is None:
+            issues.append("No total could be read.")
+        if r.cost_line is None:
+            issues.append("It doesn't match any shared cost on this quest.")
+        status = "verified"
+
+    # Checks that don't depend on the model.
+    if r.purchased_on:
+        try:
+            bought = datetime.fromisoformat(r.purchased_on).date()
+            start = aware(quest.starts_at).date()
+            end = trip_ends_at(quest).date()
+            if not (start - timedelta(days=7) <= bought <= end + timedelta(days=1)):
+                issues.append(f"Dated {r.purchased_on}, outside the trip.")
+        except ValueError:
+            issues.append("The date isn't a real date.")
+    if r.total_cents and r.cost_line and r.total_cents > 3 * shared[r.cost_line]:
+        issues.append(f"More than three times the {fmt(shared[r.cost_line])} estimate for {r.cost_line}.")
+
+    if reading is not None and (not reading.get("is_receipt") or r.total_cents is None):
+        status = "rejected"
+    elif issues and status == "verified":
+        status = "flagged"
+    r.issues = issues
+    r.status = status
+    db.add(r)
+    db.flush()
+    label = {"verified": "verified", "flagged": "flagged for a look",
+             "unverified": "added without automatic checks", "rejected": "rejected"}[status]
+    source = f" from {r.merchant}" if r.merchant else ""
+    amount = f" for {fmt(r.total_cents)}" if r.total_cents else ""
+    say(db, quest, f"{user.name} added a receipt{source}{amount}. It was {label}.",
+        meta={"event": "receipt", "receipt": r.id})
+    return r
+
+
+def remove_receipt(db: Session, r: Receipt) -> None:
+    r.status = "removed"
+    db.flush()
+
+
+def receipt_out(r: Receipt) -> dict:
+    return {"id": r.id, "merchant": r.merchant, "purchased_on": r.purchased_on, "total_cents": r.total_cents,
+            "cost_line": r.cost_line, "status": r.status, "issues": r.issues or [], "reader": r.reader,
+            "filename": r.filename, "created_at": r.created_at.isoformat() if r.created_at else None}
+
+
+def propose_settle_up(db: Session, quest: Quest, actual_shared_cents: int | None = None, note: str = "") -> Proposal:
+    """After the trip, settle the difference between real shared costs and the estimate.
+
+    With receipts, each shared line with receipts costs what its receipts add up to, and lines without
+    receipts keep their estimate. Without receipts, the host's total is used and labelled unverified."""
     if quest.status not in {"locked", "completed"}:
         raise QuestError("Settle up after the quest is locked.")
     payers = [m for m in quest.memberships if m.status == "charged"]
     if not payers:
         raise QuestError("Nobody was charged on this quest.")
     planned = sum(int(l["cents"]) for l in quest.cost_lines if l.get("split") == "shared")
+    usable = list(db.scalars(select(Receipt).where(
+        Receipt.quest_id == quest.id, Receipt.status.in_(["verified", "flagged", "unverified"]),
+        Receipt.total_cents.isnot(None), Receipt.cost_line.isnot(None))))
+    evidence = None
+    if usable:
+        shared = {l["label"]: int(l["cents"]) for l in quest.cost_lines if l.get("split") == "shared"}
+        covered = sorted({r.cost_line for r in usable})
+        actual_shared_cents = planned - sum(shared[c] for c in covered) + sum(r.total_cents for r in usable)
+        evidence = [receipt_out(r) for r in usable]
+        flagged = [r for r in usable if r.status == "flagged"]
+        unchecked = [r for r in usable if r.status == "unverified"]
+        per_line = "; ".join(
+            f"{c}: {fmt(sum(r.total_cents for r in usable if r.cost_line == c))} on receipts, "
+            f"{fmt(shared[c])} estimated" for c in covered)
+        count = f"{len(usable)} receipt" + ("s" if len(usable) != 1 else "")
+        check = ""
+        if flagged:
+            check += f" {len(flagged)} {'needs' if len(flagged) == 1 else 'need'} a look before you approve."
+        if unchecked:
+            check += (f" {len(unchecked)} {'was' if len(unchecked) == 1 else 'were'} entered by the host "
+                      f"and not checked automatically.")
+        if not check:
+            check = " Every receipt was read and checked."
+        note = f"From {count}. {per_line}.{check}" + (f" {note}" if note else "")
+    elif actual_shared_cents is None:
+        raise QuestError("Add a receipt or enter the real total.")
+    else:
+        note = "Entered by the host without receipts." + (f" {note}" if note else "")
     diff = actual_shared_cents - planned
     if diff == 0:
         raise QuestError("Actual costs match the estimate. Nothing to settle.")
@@ -619,7 +825,12 @@ def propose_settle_up(db: Session, quest: Quest, actual_shared_cents: int, note:
                     "note": f"Shared costs came in {fmt(diff)} over the estimate. Your share is {fmt(per)}."} for m in payers]
         title = f"Invoice {fmt(per)} to each of {len(payers)} people"
         why = f"Shared costs were {fmt(actual_shared_cents)}, {fmt(diff)} over the estimate. {note}".strip()
-    return create_proposal(db, quest, title, why, actions)
+    p = create_proposal(db, quest, title, why, actions)
+    if evidence:
+        p.evidence = evidence
+        p.rationale = why
+        db.flush()
+    return p
 
 
 # ----------------------------------------------------------------------------
@@ -647,7 +858,7 @@ def _nudge(db: Session, q: Quest, now: datetime) -> bool:
 
 def tick(db: Session) -> dict:
     now = utcnow()
-    counts = {"cancelled": 0, "locked": 0, "standby_released": 0, "abandoned": 0, "nudged": 0}
+    counts = {"cancelled": 0, "locked": 0, "standby_released": 0, "abandoned": 0, "nudged": 0, "paid_out": 0}
     ids = list(db.scalars(select(Quest.id).where(Quest.status.in_(["open", "on", "locked"]))))
     for qid in ids:
         with quest_lock(qid):
@@ -660,7 +871,10 @@ def tick(db: Session) -> dict:
                 elif q.status == "on" and aware(q.join_by) <= now:
                     lock(db, q, reason="The join deadline passed, so the quest locked.")
                     counts["locked"] += 1
-                elif q.status == "locked" and aware(q.starts_at) <= now:
+                elif q.status == "locked" and payout_due_at(q) <= now and not payout_blocker(db, q):
+                    complete(db, q)
+                    counts["paid_out"] += 1
+                elif q.status == "locked" and aware(q.starts_at) <= now and standby(q):
                     for m in standby(q):
                         release(db, m, note="Trip started, standby hold released")
                         counts["standby_released"] += 1

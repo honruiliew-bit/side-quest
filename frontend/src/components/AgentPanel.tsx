@@ -6,6 +6,7 @@ import { money, timeAgo } from "@/lib/format";
 import { useSession } from "@/lib/session";
 import type { ChatMessage, Proposal, ProposalAction, QuestDetail } from "@/lib/types";
 import { Avatar } from "./Avatar";
+import { ReceiptCard, SettleUp } from "./Receipts";
 
 const TOOL_LABEL: Record<string, string> = {
   get_quest_state: "Read the quest",
@@ -13,6 +14,7 @@ const TOOL_LABEL: Record<string, string> = {
   leave_quest: "Handled leaving",
   propose_money_actions: "Sent to the host",
   add_stop_note: "Updated the plan",
+  report_problem: "Paused the payout",
   paypal_get_order_details: "PayPal Agent Toolkit: get_order_details",
   paypal_get_invoice: "PayPal Agent Toolkit: get_invoice",
 };
@@ -28,7 +30,7 @@ function opLine(a: ProposalAction, locked: boolean): string {
     case "refund":
       return `Refund capture ${a.ref ?? ""}. ${money(a.cents)} back to ${a.name}.`;
     case "invoice":
-      return `Send ${a.name} a PayPal invoice for ${money(a.cents)} with the Agent Toolkit.`;
+      return `Send ${a.name} a PayPal invoice for ${money(a.cents)} with the Agent Toolkit, receipts linked.`;
   }
 }
 
@@ -105,6 +107,12 @@ export function AgentPanel({ q, onChange }: { q: QuestDetail; onChange: (q: Ques
           <div className="flex flex-col gap-3 bg-white p-4">
             <div className="font-bold">{p.title}</div>
             <p className="text-[15px] leading-relaxed">{p.rationale}</p>
+            {p.evidence.length > 0 && (
+              <div className="flex flex-col gap-2">
+                <div className="label">Receipts behind this</div>
+                {p.evidence.map((r) => <ReceiptCard key={r.id} r={r} />)}
+              </div>
+            )}
             <div>
               <div className="label mb-1">Exactly what runs on PayPal</div>
               <ol className="tab list-decimal pl-5 text-[14px] leading-relaxed">
@@ -219,41 +227,5 @@ function Bubble({ m, tz, me }: { m: ChatMessage; tz: string; me?: string }) {
         <p className="text-[15px] leading-relaxed">{m.body}</p>
       </div>
     </div>
-  );
-}
-
-function SettleUp({ q, onChange }: { q: QuestDetail; onChange: (q: QuestDetail) => void }) {
-  const { toast } = useSession();
-  const [value, setValue] = useState((q.shared_cents / 100).toFixed(2));
-  const [busy, setBusy] = useState(false);
-  return (
-    <form
-      className="flex flex-col gap-2 border-t-2 border-dashed border-ink pt-4"
-      onSubmit={async (e) => {
-        e.preventDefault();
-        setBusy(true);
-        try {
-          const cents = Math.round(parseFloat(value) * 100);
-          const detail = await api<QuestDetail>(`/quests/${q.id}/settle`, { method: "POST", json: { actual_shared_cents: cents } });
-          onChange(detail);
-          toast("Settle up drafted. Review it above.");
-        } catch (err) {
-          toast(err instanceof Error ? err.message : "Couldn't settle up.", "error");
-        } finally {
-          setBusy(false);
-        }
-      }}
-    >
-      <label htmlFor="settle" className="font-bold">Settle up after the trip</label>
-      <p className="text-[14px] text-muted">
-        Shared costs were estimated at {money(q.shared_cents)}. Enter what they really came to. Under means refunds, over means
-        PayPal invoices.
-      </p>
-      <div className="flex gap-2">
-        <span className="grid place-items-center px-1 font-bold">$</span>
-        <input id="settle" className="field tab" inputMode="decimal" value={value} onChange={(e) => setValue(e.target.value)} />
-        <button className="btn btn-ink whitespace-nowrap" disabled={busy} type="submit">{busy ? "Drafting" : "Draft it"}</button>
-      </div>
-    </form>
   );
 }

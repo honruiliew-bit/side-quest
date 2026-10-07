@@ -3,7 +3,7 @@
 import secrets
 from datetime import datetime, timezone
 
-from sqlalchemy import JSON, Boolean, DateTime, ForeignKey, Integer, String, Text
+from sqlalchemy import JSON, Boolean, DateTime, ForeignKey, Integer, LargeBinary, String, Text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from sqlalchemy.types import TypeDecorator
 
@@ -84,6 +84,9 @@ class Quest(Base):
     tz: Mapped[str] = mapped_column(String(40), default="America/New_York")
     # Set on copies made by the guided demo, so the UI can show the walkthrough.
     tour: Mapped[bool | None] = mapped_column(Boolean, nullable=True, default=False)
+    # Escrow: the payout releases on its own after the trip unless a member reports a problem.
+    payout_paused_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    payout_paused_by: Mapped[str | None] = mapped_column(String(40), nullable=True)
     min_people: Mapped[int] = mapped_column(Integer)
     max_people: Mapped[int] = mapped_column(Integer)
     currency: Mapped[str] = mapped_column(String(3), default="USD")
@@ -194,8 +197,33 @@ class Proposal(Base):
     actions: Mapped[list] = mapped_column(JSON, default=list)
     status: Mapped[str] = mapped_column(String(12), default="pending")  # pending|running|executed|declined|failed|expired
     result: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    # Supporting evidence shown to the host and members, e.g. receipts behind a settle up.
+    evidence: Mapped[list | None] = mapped_column(JSON, nullable=True)
     created_at: Mapped[datetime] = mapped_column(TZDateTime(), default=utcnow)
     decided_at: Mapped[datetime | None] = mapped_column(TZDateTime(), nullable=True)
+
+
+class Receipt(Base):
+    """A photo of a real cost, read by Claude and checked before it can change what anyone pays."""
+
+    __tablename__ = "receipts"
+
+    id: Mapped[str] = mapped_column(String(40), primary_key=True, default=lambda: new_id("rc"))
+    quest_id: Mapped[str] = mapped_column(ForeignKey("quests.id"), index=True)
+    uploaded_by: Mapped[str] = mapped_column(ForeignKey("users.id"))
+    filename: Mapped[str] = mapped_column(String(200), default="receipt")
+    media_type: Mapped[str] = mapped_column(String(40))
+    data: Mapped[bytes] = mapped_column(LargeBinary)
+    sha256: Mapped[str] = mapped_column(String(64), index=True)
+    merchant: Mapped[str | None] = mapped_column(String(160), nullable=True)
+    purchased_on: Mapped[str | None] = mapped_column(String(10), nullable=True)
+    total_cents: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    cost_line: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    # verified | flagged | unverified | rejected | removed
+    status: Mapped[str] = mapped_column(String(12), default="unverified")
+    issues: Mapped[list] = mapped_column(JSON, default=list)
+    reader: Mapped[str] = mapped_column(String(12), default="claude")  # claude | host
+    created_at: Mapped[datetime] = mapped_column(TZDateTime(), default=utcnow)
 
 
 class WebhookEvent(Base):

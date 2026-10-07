@@ -30,7 +30,11 @@ export function MoneyRoute({ q }: { q: QuestDetail }) {
     },
     {
       title: "Host paid",
-      detail: stage >= 4 ? `${money(paidOut)} paid to ${q.host.name}` : "After the trip",
+      detail: stage >= 4
+        ? `${money(paidOut)} paid to ${q.host.name}`
+        : q.payout?.paused_reason
+          ? "Paused: a member reported a problem"
+          : `${q.payout?.hold_hours ?? 24} hours after the trip, unless someone reports a problem`,
       api: "Payouts v1",
     },
   ];

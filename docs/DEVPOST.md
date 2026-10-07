@@ -17,7 +17,8 @@ PayPal already has the right primitive for this: authorize now, capture later. W
 - **Final split only.** At the deadline every hold is captured at the real split. Nobody pays more than they approved, and most pay less.
 - **Nothing runs, nothing charged.** If the minimum isn't reached, every hold is voided.
 - **An agent runs the group.** Claude drafts a full quest from one sentence, answers questions in the group chat, and handles dropouts, standby swaps and cost overruns. It can only propose money moves. The host sees the exact PayPal operations and approves them.
-- **After the trip.** Refunds if costs come in under, PayPal invoices through the Agent Toolkit if they come in over, and a PayPal Payout to the host.
+- **After the trip.** The host adds receipt photos and Claude reads them. Costs that came in under become refunds; costs that came in over become PayPal invoices through the Agent Toolkit, with the receipts linked.
+- **Escrowed payout.** The host is paid through PayPal Payouts 24 hours after the trip, unless a member reports a problem. The host can't take the money early.
 - **Agentic commerce.** Sidequest is an MCP server. Claude, ChatGPT or any MCP client can find a quest and start a hold for you. You still approve it on PayPal.
 
 ## Business model
@@ -38,6 +39,7 @@ Sidequest adds a small fee to each share, collected only when a quest runs (`PLA
 - **The split has to be safe.** The hold is placed before anyone knows the group size. Holding at the minimum-group price and capturing at the final split means the capture is always at or below the authorization.
 - **Dropouts after charging.** After lock, a refund alone would raise everyone else's share. Standby members keep their holds after lock, so a swap is a capture plus a refund and nobody else's price changes.
 - **Agents and money.** We wanted the agent to be useful without being trusted with money. Every money move it suggests becomes a proposal that is re-validated against the live state at approval time.
+- **Trust in both directions.** Holds protect members from paying for a trip that never happens. A payout window and receipt checks protect them from a host who overcharges or doesn't show.
 
 ## Accomplishments
 

@@ -45,6 +45,8 @@ class Settings:
     demo_buyer_email: str = os.getenv("DEMO_BUYER_EMAIL", "")
     demo_buyer_password: str = os.getenv("DEMO_BUYER_PASSWORD", "")
     chat_per_minute: int = int(os.getenv("CHAT_PER_MINUTE", "8"))
+    # Hours after the trip ends before the host is paid, so members can report a problem first.
+    payout_hold_hours: int = int(os.getenv("PAYOUT_HOLD_HOURS", "24"))
 
     # Money
     currency: str = os.getenv("CURRENCY", "USD")

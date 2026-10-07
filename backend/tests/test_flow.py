@@ -114,8 +114,10 @@ def test_full_lifecycle(client):
     d = client.post(f"/proposals/{settle['id']}/decide", json={"approve": True}, headers=hon).json()
     assert sum(1 for e in d["ledger"] if e["kind"] == "invoice") == 7
 
-    # Trip done, host paid out.
-    d = client.post(f"/quests/{qid}/complete", headers=hon).json()
+    # The host can't take the money before the trip. It releases on its own after the dispute window.
+    early = client.post(f"/quests/{qid}/complete", headers=hon)
+    assert early.status_code == 409 and "on its own" in early.json()["detail"]
+    d = client.post(f"/demo/quests/{qid}/payout", headers=hon).json()
     assert d["status"] == "completed" and d["stage"] == 4
     payout = [e for e in d["ledger"] if e["kind"] == "payout"][0]
     assert payout["cents"] == 6729 * 7 - 6729 + 6729  # refund for Leo, charge for the standby swap

@@ -34,9 +34,9 @@ Judging weighs presentation equally with the other four criteria, and Best Demo 
 
 ## 2:05 to 2:25. Settle up and payout
 
-**Visual:** Settle up with a higher total. Sidequest drafts the invoices. Approve. Trip done, payout.
+**Visual:** Add the gas receipt. Claude reads it: merchant, date, $95.00, Gas and tolls. Approve the invoices. Show the money route reaching Host paid.
 
-**Voice:** "Gas came in over. Sidequest bills everyone their share with PayPal invoices through the Agent Toolkit. After the trip, the host gets paid through PayPal Payouts."
+**Voice:** "Gas came in over. The host snaps the receipt, Claude reads and checks it, and everyone gets a PayPal invoice for their share with the receipt linked. The host is paid 24 hours after the trip, and anyone can pause that if something went wrong."
 
 ## 2:25 to 2:40. Agentic commerce
 

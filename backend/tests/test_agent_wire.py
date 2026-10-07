@@ -31,10 +31,17 @@ def _msg(content, stop):
             "stop_reason": stop, "stop_sequence": None, "usage": {"input_tokens": 1, "output_tokens": 1}}
 
 
+RECEIPT_READS = []
+
+
 def _handler(request: httpx.Request) -> httpx.Response:
     body = json.loads(request.content)
     REQUESTS.append(body)
     tools = {t["name"] for t in body.get("tools", [])}
+    if "read_receipt" in tools:
+        RECEIPT_READS.append(body)
+        answer = RECEIPT_READS_ANSWERS[len(RECEIPT_READS) - 1]
+        return httpx.Response(200, json=_msg([{"type": "tool_use", "id": "tu_r", "name": "read_receipt", "input": answer}], "tool_use"))
     if "draft_quest" in tools:
         return httpx.Response(200, json=_msg([{"type": "tool_use", "id": "tu_d", "name": "draft_quest", "input": {
             "title": "Sunrise kayak", "area": "Hudson River", "summary": "Paddle at dawn.", "line_code": "hr",
@@ -85,3 +92,34 @@ def test_builder_uses_forced_tool():
     assert d["cost_lines"] == [{"label": "Guide", "cents": 15000, "split": "shared"},
                                {"label": "Kayak", "cents": 2550, "split": "each"}]
     assert REQUESTS[-1]["tool_choice"] == {"type": "tool", "name": "draft_quest"}
+
+
+RECEIPT_READS_ANSWERS = [
+    {"is_receipt": True, "legible": True, "merchant": "Route 9 Fuel", "date": None, "total_usd": 95.0,
+     "category": "fuel", "cost_line": "Gas and tolls", "concerns": []},
+    {"is_receipt": True, "legible": True, "merchant": "Big Spender", "date": "2025-01-01", "total_usd": 900.0,
+     "category": "fuel", "cost_line": "Gas and tolls", "concerns": ["Total looks hand edited"]},
+    {"is_receipt": False, "legible": True, "merchant": None, "date": None, "total_usd": None,
+     "category": "other", "cost_line": "none", "concerns": []},
+]
+
+
+def test_receipts_are_read_by_claude_and_checked():
+    from app import engine
+    from app.models import Quest, User
+
+    with session_scope() as db:
+        q = db.scalar(select(Quest).where(Quest.line_code == "RI"))  # finished trip with a "Gas and tolls" line
+        ana = db.get(User, q.host_id)
+        good = engine.add_receipt(db, q, ana, "gas.png", "image/png", b"\x89PNGgood")
+        bad = engine.add_receipt(db, q, ana, "big.png", "image/png", b"\x89PNGbad")
+        cat = engine.add_receipt(db, q, ana, "cat.png", "image/png", b"\x89PNGcat")
+        assert good.status == "verified" and good.total_cents == 9500 and good.cost_line == "Gas and tolls"
+        assert bad.status == "flagged"
+        assert any("edited" in i for i in bad.issues)
+        assert any("outside the trip" in i for i in bad.issues)
+        assert any("three times" in i for i in bad.issues)
+        assert cat.status == "rejected"
+    image_block = RECEIPT_READS[0]["messages"][0]["content"][0]
+    assert image_block["type"] == "image" and image_block["source"]["media_type"] == "image/png"
+    assert RECEIPT_READS[0]["tool_choice"] == {"type": "tool", "name": "read_receipt"}

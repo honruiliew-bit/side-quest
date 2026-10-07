@@ -133,3 +133,65 @@ def test_agent_nudges_once_when_short_near_deadline(client):
     q = client.get(f"/quests/{qid}").json()
     nudges = [m for m in q["messages"] if m["role"] == "agent" and m["body"].startswith("Heads up")]
     assert len(nudges) == 1 and "1 more person" in nudges[0]["body"]
+
+
+def _locked_tour(client):
+    qid = client.post("/demo/tour").json()["id"]
+    hon = login(client, "hon")
+    client.post(f"/demo/quests/{qid}/crowd", json={"count": 1}, headers=hon)
+    assert client.post(f"/quests/{qid}/lock", headers=hon).json()["status"] == "locked"
+    return qid, hon
+
+
+def test_payout_releases_itself_after_the_trip_unless_paused(client):
+    from datetime import timedelta
+
+    from app.db import session_scope
+    from app.engine import tick
+    from app.models import Quest, utcnow
+
+    qid, hon = _locked_tour(client)
+    # A member who paid reports a problem. That pauses the payout.
+    maya = login(client, "maya")
+    d = client.post(f"/quests/{qid}/problem", json={"reason": "The van never showed up"}, headers=maya).json()
+    assert d["payout"]["paused_reason"].startswith("Maya")
+    # Someone who didn't pay can't pause it.
+    assert client.post(f"/quests/{qid}/problem", json={"reason": "spite"}, headers=login(client, "noor")).status_code == 403
+    with session_scope() as db:
+        q = db.get(Quest, qid)
+        q.starts_at = utcnow() - timedelta(days=3)
+        q.ends_at = utcnow() - timedelta(days=2)
+    with session_scope() as db:
+        tick(db)
+    assert client.get(f"/quests/{qid}").json()["status"] == "locked"  # paused, not paid
+    client.post(f"/quests/{qid}/problem/resolve", json={"note": "Refunded the van"}, headers=hon)
+    with session_scope() as db:
+        tick(db)
+    d = client.get(f"/quests/{qid}").json()
+    assert d["status"] == "completed"
+    assert any(e["kind"] == "payout" for e in d["ledger"])
+
+
+def test_receipts_drive_the_settle_up(client):
+    import base64
+    import io
+
+    qid, hon = _locked_tour(client)
+    png = base64.b64encode(b"\x89PNG\r\n\x1a\n" + b"fake receipt one").decode()
+    # The AI is off in this suite, so the host gives the total and the receipt is labelled unverified.
+    r = client.post(f"/quests/{qid}/receipts", headers=hon,
+                    json={"filename": "gas.png", "media_type": "image/png", "data_base64": png, "total_cents": 9500})
+    assert r.status_code == 200, r.text
+    assert r.json()["receipt"]["status"] == "unverified"
+    dupe = client.post(f"/quests/{qid}/receipts", headers=hon,
+                       json={"filename": "gas.png", "media_type": "image/png", "data_base64": png, "total_cents": 9500})
+    assert dupe.status_code == 409
+    # Only the host can add receipts.
+    assert client.post(f"/quests/{qid}/receipts", headers=login(client, "maya"),
+                       json={"filename": "x.png", "media_type": "image/png", "data_base64": png}).status_code == 403
+    d = client.post(f"/quests/{qid}/settle", json={}, headers=hon).json()
+    p = [x for x in d["proposals"] if x["status"] == "pending"][0]
+    assert p["evidence"] and p["evidence"][0]["total_cents"] == 9500
+    assert "receipt" in p["rationale"]
+    img = client.get(f"/receipts/{p['evidence'][0]['id']}/image")
+    assert img.status_code == 200 and img.headers["content-type"] == "image/png"

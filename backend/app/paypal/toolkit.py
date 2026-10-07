@@ -52,20 +52,28 @@ def is_toolkit_tool(name: str) -> bool:
     return name.startswith("paypal_") and name[len("paypal_"):] in _BY_METHOD
 
 
-_api = None
+_client = None
 
 
-def _real_api():
-    global _api
-    if _api is None:
-        from paypal_agent_toolkit.shared.api import PayPalAPI
+def _real_client():
+    """The toolkit's own PayPal client, with its access token cached.
 
-        _api = PayPalAPI(
-            client_id=settings.paypal_client_id,
-            secret=settings.paypal_client_secret,
-            context=Context(sandbox=True, source="SIDEQUEST"),
-        )
-    return _api
+    Out of the box it fetches a new OAuth token before every request, which made sending
+    seven invoices take about twenty requests. Reusing the gateway's cached token cuts that
+    to one request per call."""
+    global _client
+    if _client is None:
+        from paypal_agent_toolkit.shared.paypal_client import PayPalClient
+
+        from .gateway import gateway_for
+
+        class CachedTokenClient(PayPalClient):
+            def get_access_token(self):  # noqa: D401
+                return gateway_for("paypal")._access_token()
+
+        _client = CachedTokenClient(settings.paypal_client_id, settings.paypal_client_secret,
+                                    Context(sandbox=True, source="SIDEQUEST"))
+    return _client
 
 
 def _mock_id(prefix: str) -> str:
@@ -93,7 +101,7 @@ def run(method: str, params: dict) -> dict:
     tool["args_schema"](**params)  # validate with the toolkit's own model
     if paypal_mode() == "mock":
         return _mock(method, params)
-    raw = _real_api().run(method, params)
+    raw = tool["execute"](_real_client(), params)
     try:
         return json.loads(raw) if isinstance(raw, str) else raw
     except ValueError:
@@ -109,7 +117,8 @@ def run_for_claude(name: str, params: dict) -> str:
     return json.dumps(result)[:6000]
 
 
-def invoice_params(*, email: str, name: str, cents: int, item: str, note: str, reference: str) -> dict:
+def invoice_params(*, email: str, name: str, cents: int, item: str, note: str, reference: str,
+                   description: str | None = None) -> dict:
     return {
         "currency_code": settings.currency,
         "invoice_date": date.today().isoformat(),
@@ -118,15 +127,17 @@ def invoice_params(*, email: str, name: str, cents: int, item: str, note: str, r
         "primary_recipients": [{"billing_info": {"email_address": email, "name": {"given_name": name}}}],
         "items": [{
             "name": item[:200],
+            **({"description": description[:1000]} if description else {}),
             "quantity": "1",
             "unit_amount": {"currency_code": settings.currency, "value": f"{cents // 100}.{cents % 100:02d}"},
         }],
     }
 
 
-def create_and_send_invoice(*, email: str, name: str, cents: int, item: str, note: str, reference: str) -> dict[str, Any]:
+def create_and_send_invoice(*, email: str, name: str, cents: int, item: str, note: str, reference: str,
+                            description: str | None = None) -> dict[str, Any]:
     created = run("create_invoice", invoice_params(email=email, name=name, cents=cents, item=item,
-                                                   note=note, reference=reference))
+                                                   note=note, reference=reference, description=description))
     invoice_id = created.get("id")
     if not invoice_id and isinstance(created.get("href"), str):
         invoice_id = created["href"].rstrip("/").split("/")[-1]

@@ -89,6 +89,19 @@ export type ProposalAction = {
   item?: string;
 };
 
+export type Receipt = {
+  id: string;
+  merchant: string | null;
+  purchased_on: string | null;
+  total_cents: number | null;
+  cost_line: string | null;
+  status: "verified" | "flagged" | "unverified" | "rejected" | "removed";
+  issues: string[];
+  reader: "claude" | "host";
+  filename: string;
+  created_at: string | null;
+};
+
 export type Proposal = {
   id: string;
   title: string;
@@ -96,6 +109,7 @@ export type Proposal = {
   actions: ProposalAction[];
   status: "pending" | "running" | "executed" | "declined" | "failed" | "expired";
   result: { done?: { type: string; name: string }[]; error?: string } | null;
+  evidence: Receipt[];
   created_at: string;
 };
 
@@ -118,6 +132,8 @@ export type QuestDetail = QuestCard & {
   timestamps: Record<string, string | null>;
   paypal_mode: "mock" | "sandbox";
   host_stats: { hosted: number; completed: number; travelers: number };
+  receipts: Receipt[];
+  payout: { due_at: string; paused_reason: string | null; blocker: string | null; hold_hours: number };
 };
 
 export type AppConfig = {

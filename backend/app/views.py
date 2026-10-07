@@ -5,8 +5,9 @@ from __future__ import annotations
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from .models import LedgerEntry, Message, Proposal, Quest, User, aware
-from .engine import current_share, headcount, quest_hold, seated, standby
+from .models import LedgerEntry, Message, Proposal, Quest, Receipt, User, aware
+from .engine import current_share, headcount, payout_blocker, payout_due_at, quest_hold, receipt_out, seated, standby
+from .config import settings
 from .paypal.gateway import paypal_mode
 from .pricing import price_cents, price_table, totals
 
@@ -138,8 +139,16 @@ def quest_detail(db: Session, q: Quest, viewer: User | None) -> dict:
         } for msg in reversed(messages)],
         "proposals": [{
             "id": p.id, "title": p.title, "rationale": p.rationale, "actions": p.actions,
-            "status": p.status, "result": p.result, "created_at": iso(p.created_at),
+            "status": p.status, "result": p.result, "evidence": p.evidence or [], "created_at": iso(p.created_at),
         } for p in proposals],
+        "receipts": [receipt_out(r) for r in db.scalars(
+            select(Receipt).where(Receipt.quest_id == q.id, Receipt.status != "removed").order_by(Receipt.created_at))],
+        "payout": {
+            "due_at": iso(payout_due_at(q)),
+            "paused_reason": q.payout_paused_reason,
+            "blocker": payout_blocker(db, q) if q.status == "locked" else None,
+            "hold_hours": settings.payout_hold_hours,
+        },
         "timestamps": {
             "tipped_at": iso(q.tipped_at), "locked_at": iso(q.locked_at),
             "completed_at": iso(q.completed_at), "cancelled_at": iso(q.cancelled_at),

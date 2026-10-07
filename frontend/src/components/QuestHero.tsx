@@ -163,16 +163,7 @@ function Fare({ q, onChange }: { q: QuestDetail; onChange: (q: QuestDetail) => v
           {busy === "lock" ? "Charging" : "Lock and charge everyone"}
         </button>
       )}
-      {isHost && q.status === "locked" && (
-        <button className="btn btn-ink-signal w-full" disabled={!!busy} onClick={() => act("complete", `/quests/${q.id}/complete`, "", {
-          title: "Trip done?",
-          body: `Sidequest sends ${money(q.money.charged_cents - q.money.refunded_cents)} to your PayPal account through PayPal Payouts and releases any standby holds.`,
-          action: "Send my payout",
-          tone: "money",
-        })}>
-          {busy === "complete" ? "Sending payout" : "Trip done: send my payout"}
-        </button>
-      )}
+      {q.status === "locked" && <PayoutStatus q={q} onChange={onChange} />}
 
       {activeMine && (activeMine.status === "held" || activeMine.status === "standby") && (
         <button className="btn btn-ghost btn-sm w-full" disabled={!!busy} onClick={() => act("leave", `/quests/${q.id}/leave`, "You left. Your hold was released.", {
@@ -218,5 +209,79 @@ function ShareInvite({ id }: { id: string }) {
     >
       Copy invite link
     </button>
+  );
+}
+
+function PayoutStatus({ q, onChange }: { q: QuestDetail; onChange: (q: QuestDetail) => void }) {
+  const { toast } = useSession();
+  const [reporting, setReporting] = useState(false);
+  const [reason, setReason] = useState("");
+  const [busy, setBusy] = useState(false);
+  const isHost = q.viewer.role === "host";
+  const paid = q.viewer.membership?.status === "charged";
+  const due = new Date(q.payout.due_at);
+  const isDue = due.getTime() <= Date.now();
+  const when = `${due.toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric", timeZone: q.tz })}, ${clock(q.payout.due_at, q.tz)}`;
+
+  const post = async (path: string, json: unknown, done: string) => {
+    setBusy(true);
+    try {
+      onChange(await api<QuestDetail>(path, { method: "POST", json }));
+      toast(done);
+      setReporting(false);
+      setReason("");
+    } catch (e) {
+      toast(e instanceof Error ? e.message : "That didn't work.", "error");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="flex flex-col gap-2 rounded border-2 border-ink bg-white p-3 text-[14px]">
+      {q.payout.paused_reason ? (
+        <>
+          <div className="font-bold text-stamp">Payout paused</div>
+          <p>{q.payout.paused_reason}</p>
+          {isHost && (
+            <button className="btn btn-ink btn-sm" disabled={busy}
+              onClick={() => post(`/quests/${q.id}/problem/resolve`, { note: "" }, "Resolved. The payout is back on schedule.")}>
+              Mark resolved
+            </button>
+          )}
+        </>
+      ) : (
+        <>
+          <div className="font-bold">{isHost ? "Your payout" : `${q.host.name}'s payout`}</div>
+          <p>
+            {isDue
+              ? q.payout.blocker ?? "Ready to release."
+              : `Releases on its own ${when}, ${q.payout.hold_hours} hours after the trip, unless someone reports a problem.`}
+          </p>
+          {isHost && isDue && !q.payout.blocker && (
+            <button className="btn btn-money btn-sm" disabled={busy}
+              onClick={() => post(`/quests/${q.id}/complete`, {}, "Payout sent through PayPal Payouts.")}>
+              Release my payout
+            </button>
+          )}
+        </>
+      )}
+      {paid && !q.payout.paused_reason && !reporting && (
+        <button className="self-start text-[13px] font-semibold underline" onClick={() => setReporting(true)}>
+          Something went wrong? Report a problem
+        </button>
+      )}
+      {reporting && (
+        <form className="flex flex-col gap-2" onSubmit={(e) => { e.preventDefault(); post(`/quests/${q.id}/problem`, { reason }, "Reported. The payout is paused."); }}>
+          <label htmlFor="problem" className="text-[13px] font-semibold">What happened?</label>
+          <textarea id="problem" className="field" rows={2} value={reason} onChange={(e) => setReason(e.target.value)}
+            placeholder="The van never showed up" minLength={3} required />
+          <div className="flex gap-2">
+            <button className="btn btn-ink btn-sm" disabled={busy} type="submit">Pause the payout</button>
+            <button className="btn btn-ghost btn-sm" type="button" onClick={() => setReporting(false)}>Cancel</button>
+          </div>
+        </form>
+      )}
+    </div>
   );
 }

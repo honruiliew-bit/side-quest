@@ -4,7 +4,9 @@ import { useState } from "react";
 import { api } from "@/lib/api";
 import { money } from "@/lib/format";
 import { useSession } from "@/lib/session";
+import { sampleReceipt } from "@/lib/sampleReceipt";
 import type { Membership, QuestDetail } from "@/lib/types";
+import { uploadReceipt } from "./Receipts";
 
 type Step = {
   id: string;
@@ -46,6 +48,7 @@ export function TourPanel({ q, onChange }: { q: QuestDetail; onChange: (q: Quest
   );
   const settlePending = q.proposals.find((p) => p.status === "pending" && p.actions.some((a) => a.type === "invoice"));
   const invoiced = q.ledger.some((e) => e.kind === "invoice");
+  const hasReceipt = q.receipts.some((r) => r.status !== "removed" && r.status !== "rejected");
   const filled = q.standby.length > 0 || q.stage >= 3;
   const room = q.max_people - everyone.filter((m) => m.status === "held").length;
 
@@ -87,21 +90,30 @@ export function TourPanel({ q, onChange }: { q: QuestDetail; onChange: (q: Quest
       },
     },
     {
-      id: "settle", who: "hon", title: "Settle up",
+      id: "settle", who: "hon", title: "Settle up with receipts",
       body: settlePending
-        ? "Review the invoices the agent drafted, then approve. Each person gets a PayPal invoice through the Agent Toolkit."
-        : `Gas came in $35 over the ${money(q.shared_cents)} estimate. Draft the settle up.`,
-      done: invoiced, action: settlePending ? "Approve the invoices" : "Draft the settle up", target: "agent-h",
+        ? "Check the receipt on the card, then approve. Each person gets a PayPal invoice with the receipt linked, sent through the Agent Toolkit."
+        : hasReceipt
+          ? "Draft the settle up from the receipt. Lines with receipts use the real cost, the rest keep their estimate."
+          : "Gas came in over the estimate. Add the sample gas receipt and Claude reads it: merchant, date, total, and which cost it covers.",
+      done: invoiced,
+      action: settlePending ? "Approve the invoices" : hasReceipt ? "Draft the settle up" : "Add the sample receipt",
+      target: "agent-h",
       run: async () => {
         if (settlePending) await post(`/proposals/${settlePending.id}/decide`, { approve: true });
-        else await post(`/quests/${q.id}/settle`, { actual_shared_cents: q.shared_cents + 3500 });
+        else if (hasReceipt) await post(`/quests/${q.id}/settle`, {});
+        else {
+          const blob = await sampleReceipt(q.starts_at, q.tz);
+          const res = await uploadReceipt(q.id, blob, "sample-gas-receipt.png", { total_cents: 9500, cost_line: "Gas and tolls" });
+          onChange(res.quest);
+        }
       },
     },
     {
-      id: "payout", who: "hon", title: "Pay the host",
-      body: "The trip happened. Send the host their money through PayPal Payouts.",
-      done: q.status === "completed", action: "Send the payout", target: "money-h",
-      run: () => post(`/quests/${q.id}/complete`),
+      id: "payout", who: "any", title: "Pay the host",
+      body: `For real, the payout releases on its own ${q.payout?.hold_hours ?? 24} hours after the trip. Any member who paid can report a problem to pause it. The demo skips the wait, not the checks.`,
+      done: q.status === "completed", action: "Skip the wait and pay out", target: "money-h",
+      run: () => post(`/demo/quests/${q.id}/payout`),
     },
   ];
 
