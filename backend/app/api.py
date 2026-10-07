@@ -1,0 +1,400 @@
+"""HTTP routes."""
+
+from __future__ import annotations
+
+from datetime import datetime, timedelta
+from zoneinfo import ZoneInfo
+
+from fastapi import APIRouter, Depends, Header, HTTPException, Request
+from pydantic import BaseModel, Field
+from sqlalchemy import select
+from sqlalchemy.orm import Session
+
+from . import engine, seed as seeding
+from .agent import builder, keeper
+from .auth import PERSONAS, ensure_personas, get_or_create_user, issue_token, optional_user, require_user
+from .config import settings
+from .db import get_db
+from .models import Membership, Proposal, Quest, User, WebhookEvent, utcnow
+from .paypal.gateway import PayPalError, gateway_for, paypal_mode
+from .views import membership_out, quest_card, quest_detail, user_out
+
+router = APIRouter()
+
+
+def _quest(db: Session, quest_id: str) -> Quest:
+    q = db.get(Quest, quest_id)
+    if not q:
+        raise HTTPException(404, "That quest doesn't exist.")
+    return q
+
+
+def _host_only(q: Quest, user: User) -> None:
+    if q.host_id != user.id:
+        raise HTTPException(403, f"Only the host, {q.host.name}, can do that.")
+
+
+def _detail(db: Session, q: Quest, user: User | None) -> dict:
+    db.commit()
+    db.refresh(q)
+    return quest_detail(db, q, user)
+
+
+# --- Meta ----------------------------------------------------------------------
+
+@router.get("/health")
+def health():
+    return {"ok": True}
+
+
+@router.get("/config")
+def config():
+    return {
+        "paypal_mode": paypal_mode(),
+        "paypal_client_id": settings.paypal_client_id if paypal_mode() == "sandbox" else None,
+        "currency": settings.currency,
+        "demo_mode": settings.demo_mode,
+        "ai": "claude" if settings.ai_enabled else "offline",
+        "model": settings.anthropic_model if settings.ai_enabled else None,
+        "mcp_url": f"{settings.public_api_url}/mcp/",
+    }
+
+
+# --- Auth ------------------------------------------------------------------------
+
+class DemoIn(BaseModel):
+    persona: str
+
+
+class SignInIn(BaseModel):
+    name: str = Field(min_length=1, max_length=80)
+    email: str = Field(min_length=3, max_length=200)
+
+
+@router.get("/personas")
+def personas(db: Session = Depends(get_db)):
+    users = ensure_personas(db)
+    db.commit()
+    return [user_out(users[p[0]]) for p in PERSONAS]
+
+
+@router.post("/auth/demo")
+def auth_demo(body: DemoIn, db: Session = Depends(get_db)):
+    if not settings.demo_mode:
+        raise HTTPException(403, "Demo sign-in is turned off.")
+    users = ensure_personas(db)
+    user = users.get(body.persona)
+    if not user:
+        raise HTTPException(404, "Unknown persona.")
+    db.commit()
+    return {"token": issue_token(user), "user": user_out(user)}
+
+
+@router.post("/auth/signin")
+def auth_signin(body: SignInIn, db: Session = Depends(get_db)):
+    if "@" not in body.email:
+        raise HTTPException(422, "Enter a valid email address.")
+    user = get_or_create_user(db, body.name, body.email)
+    db.commit()
+    return {"token": issue_token(user), "user": user_out(user)}
+
+
+@router.get("/me")
+def me(user: User = Depends(require_user), db: Session = Depends(get_db)):
+    rows = db.scalars(select(Membership).where(Membership.user_id == user.id,
+                                               Membership.status.notin_(["abandoned", "pending"]))
+                      .order_by(Membership.created_at.desc())).all()
+    hosting = db.scalars(select(Quest).where(Quest.host_id == user.id).order_by(Quest.starts_at)).all()
+    return {
+        "user": user_out(user),
+        "memberships": [{**membership_out(m), "quest": quest_card(m.quest)} for m in rows],
+        "hosting": [quest_card(q) for q in hosting],
+    }
+
+
+# --- Quests ---------------------------------------------------------------------
+
+@router.get("/quests")
+def list_quests(status: str = "active", db: Session = Depends(get_db)):
+    stmt = select(Quest).order_by(Quest.starts_at)
+    if status == "active":
+        stmt = stmt.where(Quest.status.in_(["open", "on", "locked"]))
+    elif status != "all":
+        stmt = stmt.where(Quest.status == status)
+    return [quest_card(q) for q in db.scalars(stmt)]
+
+
+@router.get("/quests/{quest_id}")
+def get_quest(quest_id: str, user: User | None = Depends(optional_user), db: Session = Depends(get_db)):
+    return quest_detail(db, _quest(db, quest_id), user)
+
+
+class DraftIn(BaseModel):
+    prompt: str = Field(min_length=3, max_length=600)
+
+
+@router.post("/quests/draft")
+def draft_quest(body: DraftIn, user: User = Depends(require_user)):
+    return builder.draft(body.prompt)
+
+
+class CostLineIn(BaseModel):
+    label: str = Field(min_length=1, max_length=80)
+    cents: int = Field(gt=0, le=500_000)
+    split: str = Field(pattern="^(shared|each)$")
+
+
+class StopIn(BaseModel):
+    time: str = Field(max_length=20)
+    title: str = Field(min_length=1, max_length=120)
+    detail: str = Field(default="", max_length=240)
+
+
+class QuestIn(BaseModel):
+    title: str = Field(min_length=3, max_length=160)
+    area: str = Field(default="", max_length=80)
+    summary: str = Field(default="", max_length=600)
+    line_code: str = Field(default="SQ", max_length=2)
+    from_label: str = Field(default="", max_length=80)
+    to_label: str = Field(default="", max_length=80)
+    meet_point: str = Field(default="", max_length=200)
+    date: str
+    start_time: str
+    end_time: str = "18:00"
+    min_people: int = Field(ge=2, le=30)
+    max_people: int = Field(ge=2, le=40)
+    join_by_hours_before: int = Field(default=36, ge=1, le=336)
+    itinerary: list[StopIn] = []
+    cost_lines: list[CostLineIn] = Field(min_length=1)
+    tz: str = "America/New_York"
+
+
+@router.post("/quests")
+def create_quest(body: QuestIn, user: User = Depends(require_user), db: Session = Depends(get_db)):
+    if body.max_people < body.min_people:
+        raise HTTPException(422, "The most people can't be lower than the minimum.")
+    try:
+        tz = ZoneInfo(body.tz)
+        starts = datetime.fromisoformat(f"{body.date}T{body.start_time}").replace(tzinfo=tz)
+        ends = datetime.fromisoformat(f"{body.date}T{body.end_time}").replace(tzinfo=tz)
+    except ValueError:
+        raise HTTPException(422, "Use a date like 2026-10-17 and times like 08:10.")
+    join_by = starts - timedelta(hours=body.join_by_hours_before)
+    if join_by <= utcnow():
+        raise HTTPException(422, "The join deadline would already be over. Pick a later date or a shorter deadline.")
+    q = Quest(
+        number=engine.next_number(db), host_id=user.id, title=body.title, area=body.area, summary=body.summary,
+        line_code=(body.line_code or "SQ").upper()[:2], from_label=body.from_label, to_label=body.to_label,
+        meet_point=body.meet_point, starts_at=starts, ends_at=ends, join_by=join_by, tz=body.tz,
+        min_people=body.min_people, max_people=body.max_people, currency=settings.currency,
+        fee_bps=int(round(settings.platform_fee_pct * 100)),
+        cost_lines=[c.model_dump() for c in body.cost_lines],
+        itinerary=[s.model_dump() for s in body.itinerary],
+    )
+    db.add(q)
+    db.flush()
+    engine.say(db, q, f"{user.name} posted this quest. It runs if {q.min_people} people commit by the deadline.",
+               meta={"event": "created"})
+    db.commit()
+    return {"id": q.id, "code": q.code}
+
+
+# --- Holds ------------------------------------------------------------------------
+
+@router.post("/quests/{quest_id}/holds")
+def start_hold(quest_id: str, user: User = Depends(require_user), db: Session = Depends(get_db)):
+    q = _quest(db, quest_id)
+    m, order_id, approve_url = engine.start_hold(db, q, user)
+    db.commit()
+    return {"membership_id": m.id, "order_id": order_id, "approve_url": approve_url,
+            "hold_cents": m.hold_cents, "paypal_mode": paypal_mode()}
+
+
+class ConfirmIn(BaseModel):
+    order_id: str | None = None
+
+
+@router.post("/holds/{membership_id}/confirm")
+def confirm_hold(membership_id: str, body: ConfirmIn, user: User | None = Depends(optional_user),
+                 db: Session = Depends(get_db)):
+    m = db.get(Membership, membership_id)
+    if not m:
+        raise HTTPException(404, "That hold doesn't exist.")
+    engine.confirm_hold(db, m, body.order_id)
+    return _detail(db, m.quest, user or m.user)
+
+
+@router.get("/paypal/orders/{order_id}")
+def order_lookup(order_id: str, db: Session = Depends(get_db)):
+    """Used by the return page and the mock approval page."""
+    m = db.scalar(select(Membership).where(Membership.order_id == order_id))
+    if not m:
+        raise HTTPException(404, "No hold for that PayPal order.")
+    return {"membership": membership_out(m), "quest": quest_card(m.quest), "paypal_mode": paypal_mode()}
+
+
+@router.post("/quests/{quest_id}/leave")
+def leave(quest_id: str, user: User = Depends(require_user), db: Session = Depends(get_db)):
+    q = _quest(db, quest_id)
+    m = engine.membership_for(q, user.id)
+    if not m:
+        raise HTTPException(400, "You're not on this quest.")
+    result = engine.leave(db, m)
+    return {"result": result, "quest": _detail(db, q, user)}
+
+
+# --- Host controls ------------------------------------------------------------------
+
+@router.post("/quests/{quest_id}/lock")
+def lock(quest_id: str, user: User = Depends(require_user), db: Session = Depends(get_db)):
+    q = _quest(db, quest_id)
+    _host_only(q, user)
+    engine.lock(db, q, reason=f"{user.name} locked the quest.")
+    return _detail(db, q, user)
+
+
+@router.post("/quests/{quest_id}/complete")
+def complete(quest_id: str, user: User = Depends(require_user), db: Session = Depends(get_db)):
+    q = _quest(db, quest_id)
+    _host_only(q, user)
+    engine.complete(db, q)
+    return _detail(db, q, user)
+
+
+@router.post("/quests/{quest_id}/cancel")
+def cancel(quest_id: str, user: User = Depends(require_user), db: Session = Depends(get_db)):
+    q = _quest(db, quest_id)
+    _host_only(q, user)
+    engine.cancel(db, q, f"{user.name} cancelled the quest.")
+    return _detail(db, q, user)
+
+
+class SettleIn(BaseModel):
+    actual_shared_cents: int = Field(ge=0, le=5_000_000)
+    note: str = Field(default="", max_length=300)
+
+
+@router.post("/quests/{quest_id}/settle")
+def settle(quest_id: str, body: SettleIn, user: User = Depends(require_user), db: Session = Depends(get_db)):
+    q = _quest(db, quest_id)
+    _host_only(q, user)
+    engine.propose_settle_up(db, q, body.actual_shared_cents, body.note)
+    return _detail(db, q, user)
+
+
+class DecideIn(BaseModel):
+    approve: bool
+
+
+@router.post("/proposals/{proposal_id}/decide")
+def decide(proposal_id: str, body: DecideIn, user: User = Depends(require_user), db: Session = Depends(get_db)):
+    p = db.get(Proposal, proposal_id)
+    if not p:
+        raise HTTPException(404, "That proposal doesn't exist.")
+    q = _quest(db, p.quest_id)
+    _host_only(q, user)
+    engine.decide_proposal(db, p, body.approve)
+    return _detail(db, q, user)
+
+
+# --- Agent ---------------------------------------------------------------------------
+
+class ChatIn(BaseModel):
+    text: str = Field(min_length=1, max_length=800)
+
+
+@router.post("/quests/{quest_id}/chat")
+def chat(quest_id: str, body: ChatIn, user: User = Depends(require_user), db: Session = Depends(get_db)):
+    q = _quest(db, quest_id)
+    reply = keeper.reply(db, q, user, body.text.strip())
+    return {"reply": reply, "quest": _detail(db, q, user)}
+
+
+# --- PayPal webhooks -------------------------------------------------------------------
+
+@router.post("/webhooks/paypal")
+async def paypal_webhook(request: Request, db: Session = Depends(get_db)):
+    event = await request.json()
+    event_id = event.get("id") or ""
+    if not event_id:
+        raise HTTPException(400, "Missing event id.")
+    if db.get(WebhookEvent, event_id):
+        return {"status": "duplicate"}
+    verified = True
+    if paypal_mode() == "sandbox":
+        try:
+            verified = gateway_for("paypal").verify_webhook(dict(request.headers), event)
+        except PayPalError:
+            verified = False
+        if not verified:
+            raise HTTPException(400, "Webhook signature did not verify.")
+    resource = event.get("resource") or {}
+    db.add(WebhookEvent(id=event_id, event_type=event.get("event_type", ""), resource_id=resource.get("id"),
+                        verified=verified, payload=event))
+    outcome = engine.handle_webhook(db, event)
+    db.commit()
+    return {"status": outcome}
+
+
+# --- Clock ------------------------------------------------------------------------------
+
+@router.post("/cron/tick")
+def cron_tick(x_cron_secret: str | None = Header(default=None), db: Session = Depends(get_db)):
+    if not settings.cron_secret or x_cron_secret != settings.cron_secret:
+        raise HTTPException(403, "Bad cron secret.")
+    counts = engine.tick(db)
+    db.commit()
+    return counts
+
+
+# --- Demo controls -------------------------------------------------------------------------
+
+def _demo_only():
+    if not settings.demo_mode:
+        raise HTTPException(403, "Demo controls are turned off.")
+
+
+class CrowdIn(BaseModel):
+    count: int = Field(default=1, ge=1, le=10)
+
+
+@router.post("/demo/quests/{quest_id}/crowd")
+def demo_crowd(quest_id: str, body: CrowdIn, user: User | None = Depends(optional_user), db: Session = Depends(get_db)):
+    _demo_only()
+    q = _quest(db, quest_id)
+    people = ensure_personas(db)
+    taken = {m.user_id for m in q.memberships if m.status in engine.ACTIVE}
+    added = 0
+    for persona, *_ in PERSONAS:
+        if added >= body.count:
+            break
+        u = people[persona]
+        if u.id in taken or u.id == q.host_id and engine.membership_for(q, u.id):
+            continue
+        engine.simulate_join(db, q, u)
+        added += 1
+    if not added:
+        raise HTTPException(400, "Every demo persona is already on this quest.")
+    return _detail(db, q, user)
+
+
+@router.post("/demo/quests/{quest_id}/deadline")
+def demo_deadline(quest_id: str, user: User | None = Depends(optional_user), db: Session = Depends(get_db)):
+    """Jump the clock to the join deadline and let the scheduler do its job."""
+    _demo_only()
+    q = _quest(db, quest_id)
+    q.join_by = utcnow() - timedelta(seconds=1)
+    db.flush()
+    engine.tick(db)
+    return _detail(db, q, user)
+
+
+@router.post("/demo/reset")
+def demo_reset(db: Session = Depends(get_db)):
+    _demo_only()
+    seeding.reset(db)
+    from .db import session_scope
+
+    with session_scope() as fresh:
+        seeding.seed(fresh)
+    return {"ok": True}

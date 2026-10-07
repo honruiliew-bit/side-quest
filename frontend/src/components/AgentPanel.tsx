@@ -1,0 +1,252 @@
+"use client";
+
+import { useEffect, useRef, useState } from "react";
+import { api } from "@/lib/api";
+import { money, timeAgo } from "@/lib/format";
+import { useSession } from "@/lib/session";
+import type { ChatMessage, Proposal, ProposalAction, QuestDetail } from "@/lib/types";
+import { Avatar } from "./Avatar";
+
+const TOOL_LABEL: Record<string, string> = {
+  get_quest_state: "Read the quest",
+  price_for: "Priced the split",
+  leave_quest: "Handled leaving",
+  propose_money_actions: "Sent to the host",
+  add_stop_note: "Updated the plan",
+  paypal_get_order_details: "PayPal Agent Toolkit: get_order_details",
+  paypal_get_invoice: "PayPal Agent Toolkit: get_invoice",
+};
+
+function opLine(a: ProposalAction, locked: boolean): string {
+  switch (a.type) {
+    case "void_hold":
+      return `Void authorization ${a.ref ?? ""}. ${money(a.cents)} released to ${a.name}.`;
+    case "promote":
+      return locked
+        ? `Capture ${a.name}'s authorization ${a.ref ?? ""} at ${money(a.cents)}.`
+        : `Move ${a.name} from standby into a seat. Their hold stays.`;
+    case "refund":
+      return `Refund capture ${a.ref ?? ""}. ${money(a.cents)} back to ${a.name}.`;
+    case "invoice":
+      return `Send ${a.name} a PayPal invoice for ${money(a.cents)} with the Agent Toolkit.`;
+  }
+}
+
+export function AgentPanel({ q, onChange }: { q: QuestDetail; onChange: (q: QuestDetail) => void }) {
+  const { user, config, toast } = useSession();
+  const [text, setText] = useState("");
+  const [thinking, setThinking] = useState(false);
+  const [optimistic, setOptimistic] = useState<string | null>(null);
+  const box = useRef<HTMLDivElement>(null);
+  const isHost = q.viewer.role === "host";
+  const pending = q.proposals.filter((p) => p.status === "pending");
+  const decided = q.proposals.filter((p) => p.status !== "pending").slice(0, 3);
+  const msgs = q.messages.slice(-40);
+
+  useEffect(() => {
+    box.current?.scrollTo({ top: box.current.scrollHeight });
+  }, [msgs.length, thinking]);
+
+  const send = async (value: string) => {
+    const t = value.trim();
+    if (!t || thinking) return;
+    setText("");
+    setOptimistic(t);
+    setThinking(true);
+    try {
+      const res = await api<{ quest: QuestDetail }>(`/quests/${q.id}/chat`, { method: "POST", json: { text: t } });
+      onChange(res.quest);
+    } catch (e) {
+      toast(e instanceof Error ? e.message : "The agent didn't answer. Try again.", "error");
+      setText(t);
+    } finally {
+      setOptimistic(null);
+      setThinking(false);
+    }
+  };
+
+  const decide = async (p: Proposal, approve: boolean) => {
+    try {
+      const detail = await api<QuestDetail>(`/proposals/${p.id}/decide`, { method: "POST", json: { approve } });
+      onChange(detail);
+      const after = detail.proposals.find((x) => x.id === p.id);
+      if (after?.status === "failed") toast(after.result?.error ?? "Stopped partway.", "error");
+      else toast(approve ? "Approved. Done on PayPal." : "Declined.", approve ? "money" : "info");
+    } catch (e) {
+      toast(e instanceof Error ? e.message : "That didn't work.", "error");
+    }
+  };
+
+  const suggestions = isHost
+    ? q.status === "locked"
+      ? ["Who still owes anything?", "What did everyone pay?"]
+      : ["Who's going?", "What happens if someone drops?"]
+    : q.viewer.membership
+      ? ["What's my share now?", "What should I bring?", "I can't make it anymore"]
+      : ["How much would I pay?", "Who's going?", "Where do we meet?"];
+
+  return (
+    <aside aria-labelledby="agent-h" className="panel flex min-w-0 flex-col gap-4 p-5">
+      <div className="flex items-center justify-between gap-3">
+        <h2 id="agent-h" className="h3">Quest agent</h2>
+        <span className="rounded-full border border-rule px-2 py-[2px] text-[12px] font-semibold text-muted">
+          {config?.ai === "claude" ? "Claude" : "Offline mode"}
+        </span>
+      </div>
+
+      {pending.map((p) => (
+        <div key={p.id} className="overflow-hidden rounded border-2 border-ink">
+          <div className="bg-signal px-4 py-2 font-bold">{isHost ? "Needs your approval" : `Waiting on ${q.host.name}`}</div>
+          <div className="flex flex-col gap-3 bg-white p-4">
+            <div className="font-bold">{p.title}</div>
+            <p className="text-[15px] leading-relaxed">{p.rationale}</p>
+            <div>
+              <div className="label mb-1">Exactly what runs on PayPal</div>
+              <ol className="tab list-decimal pl-5 text-[14px] leading-relaxed">
+                {p.actions.map((a, i) => (
+                  <li key={i}>
+                    {opLine(a, q.status === "locked" || q.status === "completed")}
+                  </li>
+                ))}
+              </ol>
+            </div>
+            {isHost && (
+              <div className="flex flex-wrap gap-2">
+                <button className="btn btn-ink btn-sm" onClick={() => decide(p, true)}>Approve and run</button>
+                <button className="btn btn-ghost btn-sm" onClick={() => decide(p, false)}>Decline</button>
+              </div>
+            )}
+          </div>
+        </div>
+      ))}
+
+      <div ref={box} className="flex max-h-[420px] min-h-[200px] flex-col gap-3 overflow-y-auto pr-1" aria-live="polite">
+        {msgs.length === 0 && !optimistic && (
+          <p className="text-[15px] text-muted">Ask about the plan, the split, or your hold. The agent can also take you off the quest.</p>
+        )}
+        {msgs.map((m) => (
+          <Bubble key={m.id} m={m} tz={q.tz} me={user?.id} />
+        ))}
+        {optimistic && user && (
+          <Bubble m={{ id: "opt", role: "user", body: optimistic, user, meta: {}, created_at: new Date().toISOString() }} tz={q.tz} me={user.id} />
+        )}
+        {thinking && (
+          <div className="flex items-center gap-2 text-[14px] text-muted">
+            <span className="pulse-dot" /> Checking the quest
+          </div>
+        )}
+      </div>
+
+      {user ? (
+        <>
+          <div className="flex flex-wrap gap-2">
+            {suggestions.map((s) => (
+              <button key={s} type="button" disabled={thinking} onClick={() => send(s)}
+                className="min-h-[36px] rounded-full border-2 border-ink px-3 text-[13px] font-semibold hover:bg-ink hover:text-stock disabled:opacity-50">
+                {s}
+              </button>
+            ))}
+          </div>
+          <form className="flex gap-2" onSubmit={(e) => { e.preventDefault(); send(text); }}>
+            <label htmlFor="ask" className="sr-only">Ask the quest agent</label>
+            <input id="ask" className="field" placeholder={`Message as ${user.name}`} value={text} onChange={(e) => setText(e.target.value)} maxLength={800} />
+            <button className="btn btn-ink" type="submit" disabled={thinking || !text.trim()}>Send</button>
+          </form>
+        </>
+      ) : (
+        <p className="text-[14px] text-muted">Pick who you are in the top right to talk to the agent.</p>
+      )}
+
+      {isHost && (q.status === "locked" || q.status === "completed") && <SettleUp q={q} onChange={onChange} />}
+
+      {decided.length > 0 && (
+        <details className="text-[14px]">
+          <summary className="cursor-pointer py-1 font-semibold">Earlier decisions</summary>
+          <ul className="mt-2 flex flex-col gap-1">
+            {decided.map((p) => (
+              <li key={p.id} className="flex justify-between gap-3">
+                <span>{p.title}</span>
+                <span className={p.status === "executed" ? "font-semibold text-money" : "text-muted"}>
+                  {p.status === "executed" ? "Done on PayPal" : p.status === "failed" ? "Stopped" : "Declined"}
+                </span>
+              </li>
+            ))}
+          </ul>
+        </details>
+      )}
+    </aside>
+  );
+}
+
+function Bubble({ m, tz, me }: { m: ChatMessage; tz: string; me?: string }) {
+  if (m.role === "system") {
+    return (
+      <div className="flex gap-2 text-[13px] text-muted">
+        <span aria-hidden="true" className="mt-[6px] h-[6px] w-[6px] flex-none rounded-full bg-muted" />
+        <span>{m.body}</span>
+      </div>
+    );
+  }
+  if (m.role === "agent") {
+    const tools = (m.meta.tools ?? []).filter((t) => TOOL_LABEL[t]);
+    return (
+      <div className="flex flex-col gap-1">
+        <span className="text-[12px] font-semibold text-muted">Quest agent, {timeAgo(m.created_at, tz)}</span>
+        <p className="rounded bg-paper px-3 py-2 text-[15px] leading-relaxed">{m.body}</p>
+        {tools.length > 0 && (
+          <div className="flex flex-wrap gap-1">
+            {tools.map((t, i) => (
+              <span key={`${t}-${i}`} className={`chip ${t.startsWith("paypal_") ? "chip-held" : "chip-sim"}`}>{TOOL_LABEL[t]}</span>
+            ))}
+          </div>
+        )}
+      </div>
+    );
+  }
+  const mine = m.user?.id === me;
+  return (
+    <div className="flex items-start gap-2">
+      {m.user && <Avatar user={m.user} size={28} />}
+      <div className="min-w-0">
+        <span className="text-[12px] font-semibold text-muted">{mine ? "You" : m.user?.name}, {timeAgo(m.created_at, tz)}</span>
+        <p className="text-[15px] leading-relaxed">{m.body}</p>
+      </div>
+    </div>
+  );
+}
+
+function SettleUp({ q, onChange }: { q: QuestDetail; onChange: (q: QuestDetail) => void }) {
+  const { toast } = useSession();
+  const [value, setValue] = useState((q.shared_cents / 100).toFixed(2));
+  const [busy, setBusy] = useState(false);
+  return (
+    <form
+      className="flex flex-col gap-2 border-t-2 border-dashed border-ink pt-4"
+      onSubmit={async (e) => {
+        e.preventDefault();
+        setBusy(true);
+        try {
+          const cents = Math.round(parseFloat(value) * 100);
+          const detail = await api<QuestDetail>(`/quests/${q.id}/settle`, { method: "POST", json: { actual_shared_cents: cents } });
+          onChange(detail);
+          toast("Settle up drafted. Review it above.");
+        } catch (err) {
+          toast(err instanceof Error ? err.message : "Couldn't settle up.", "error");
+        } finally {
+          setBusy(false);
+        }
+      }}
+    >
+      <label htmlFor="settle" className="font-bold">Settle up after the trip</label>
+      <p className="text-[14px] text-muted">
+        Shared costs were estimated at {money(q.shared_cents)}. Enter what they really came to. Under means refunds, over means
+        PayPal invoices.
+      </p>
+      <div className="flex gap-2">
+        <span className="grid place-items-center px-1 font-bold">$</span>
+        <input id="settle" className="field tab" inputMode="decimal" value={value} onChange={(e) => setValue(e.target.value)} />
+        <button className="btn btn-ink whitespace-nowrap" disabled={busy} type="submit">{busy ? "Drafting" : "Draft it"}</button>
+      </div>
+    </form>
+  );
+}

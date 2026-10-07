@@ -1,0 +1,413 @@
+@import "@fontsource-variable/archivo/standard.css";
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Sidequest, direction A+ "Platform".
+   Ticket stock and ink everywhere, one loud signal-yellow platform band,
+   and one blue that only ever means money. */
+:root {
+  --paper: #e9ede4;
+  --stock: #f7f8f3;
+  --ink: #1a2130;
+  --muted: #556070;
+  --rule: #c9cfc2;
+  --dash: #8a93a0;
+  --signal: #ffc93c;
+  --money: #1f5fd6;
+  --money-ink: #ffffff;
+  --stamp: #d7362a;
+  --board: #2b3446;
+  --ease-out: cubic-bezier(0.23, 1, 0.32, 1);
+  --ease-in-out: cubic-bezier(0.77, 0, 0.175, 1);
+}
+
+html {
+  background: var(--paper);
+  color: var(--ink);
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+body {
+  font-family: "Archivo Variable", Archivo, system-ui, sans-serif;
+  background: var(--paper);
+  color: var(--ink);
+  min-height: 100dvh;
+}
+
+::selection {
+  background: var(--signal);
+  color: var(--ink);
+}
+
+:focus-visible {
+  outline: 3px solid var(--money);
+  outline-offset: 2px;
+}
+
+.tab {
+  font-variant-numeric: tabular-nums;
+}
+
+/* Type ---------------------------------------------------------------------- */
+.display {
+  font-weight: 800;
+  font-stretch: 66%;
+  letter-spacing: -0.01em;
+  line-height: 0.96;
+}
+.h2 {
+  font-size: 28px;
+  font-weight: 800;
+  font-stretch: 72%;
+  line-height: 1.1;
+}
+.h3 {
+  font-size: 20px;
+  font-weight: 800;
+  font-stretch: 76%;
+}
+.label {
+  font-size: 13px;
+  color: var(--muted);
+}
+.condensed {
+  font-stretch: 62%;
+}
+
+/* Surfaces ------------------------------------------------------------------- */
+.panel {
+  background: var(--stock);
+  border: 2px solid var(--ink);
+  border-radius: 6px;
+}
+.ticket {
+  background: var(--stock);
+  border: 2px solid var(--ink);
+  border-radius: 6px;
+  box-shadow: 0 10px 0 var(--ink);
+}
+.perf-l {
+  border-left: 2px dashed var(--ink);
+}
+.perf-r {
+  border-right: 2px dashed var(--ink);
+}
+@media (max-width: 760px) {
+  .perf-l,
+  .perf-r {
+    border-left: 0;
+    border-right: 0;
+    border-top: 2px dashed var(--ink);
+  }
+}
+.platform {
+  background: var(--signal);
+}
+.tactile {
+  height: 14px;
+  background-image: radial-gradient(circle, var(--ink) 2.5px, transparent 3px);
+  background-size: 14px 14px;
+  opacity: 0.35;
+}
+
+/* Buttons --------------------------------------------------------------------- */
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  min-height: 48px;
+  padding: 0 18px;
+  border-radius: 4px;
+  font-weight: 700;
+  font-size: 16px;
+  cursor: pointer;
+  user-select: none;
+  transition: transform 160ms var(--ease-out), background-color 160ms ease, color 160ms ease;
+  touch-action: manipulation;
+}
+.btn:active:not(:disabled) {
+  transform: scale(0.97);
+}
+.btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+.btn-ink {
+  background: var(--ink);
+  color: var(--stock);
+  border: 2px solid var(--ink);
+}
+.btn-ink-signal {
+  background: var(--ink);
+  color: var(--signal);
+  border: 2px solid var(--ink);
+}
+.btn-money {
+  background: var(--money);
+  color: var(--money-ink);
+  border: 2px solid var(--money);
+}
+.btn-ghost {
+  background: transparent;
+  color: var(--ink);
+  border: 2px solid var(--ink);
+}
+.btn-ghost-money {
+  background: #fff;
+  color: var(--money);
+  border: 2px solid var(--money);
+}
+.btn-sm {
+  min-height: 44px;
+  font-size: 15px;
+  padding: 0 14px;
+}
+@media (hover: hover) and (pointer: fine) {
+  .btn-ghost:hover:not(:disabled) {
+    background: var(--ink);
+    color: var(--stock);
+  }
+  .btn-ink:hover:not(:disabled) {
+    background: #2b3446;
+  }
+}
+
+/* Inputs ---------------------------------------------------------------------- */
+.field {
+  min-height: 46px;
+  width: 100%;
+  border: 2px solid var(--ink);
+  border-radius: 4px;
+  padding: 0 12px;
+  background: #fff;
+  color: var(--ink);
+  font-size: 16px;
+}
+textarea.field {
+  padding: 12px;
+  line-height: 1.5;
+  resize: vertical;
+}
+.field::placeholder {
+  color: #7a8492;
+}
+
+/* Money chips. Blue only ever means money. ------------------------------------ */
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 12px;
+  font-weight: 700;
+  padding: 3px 8px;
+  border-radius: 999px;
+  white-space: nowrap;
+}
+.chip-held {
+  border: 1.5px solid var(--money);
+  color: var(--money);
+  background: #fff;
+}
+.chip-paid {
+  background: var(--money);
+  color: #fff;
+  border: 1.5px solid var(--money);
+}
+.chip-released {
+  border: 1.5px dashed var(--dash);
+  color: var(--muted);
+}
+.chip-refund {
+  border: 1.5px solid var(--money);
+  color: var(--money);
+  background: #e8effc;
+}
+.chip-sim {
+  border: 1.5px solid var(--rule);
+  color: var(--muted);
+  background: transparent;
+}
+
+/* Departure board ------------------------------------------------------------- */
+.flaps {
+  display: inline-flex;
+  gap: 3px;
+  background: var(--ink);
+  padding: 7px;
+  border-radius: 6px;
+}
+.flap {
+  display: inline-grid;
+  place-items: center;
+  width: 24px;
+  height: 36px;
+  border-radius: 3px;
+  font-weight: 800;
+  font-stretch: 72%;
+  font-size: 21px;
+  color: var(--signal);
+  background-color: var(--board);
+  background-image: linear-gradient(to bottom, transparent 49%, var(--ink) 49%, var(--ink) 52%, transparent 52%);
+  font-variant-numeric: tabular-nums;
+}
+.flap-lg {
+  width: 30px;
+  height: 46px;
+  font-size: 27px;
+}
+.flap-sm {
+  width: 17px;
+  height: 26px;
+  font-size: 15px;
+}
+.flap-anim {
+  animation: flap 220ms var(--ease-out) both;
+  transform-origin: 50% 50%;
+}
+@keyframes flap {
+  0% {
+    transform: perspective(200px) rotateX(-80deg);
+    filter: brightness(1.5);
+  }
+  100% {
+    transform: perspective(200px) rotateX(0deg);
+    filter: none;
+  }
+}
+
+/* Stamp ----------------------------------------------------------------------- */
+.stamp {
+  border: 4px solid var(--stamp);
+  color: var(--stamp);
+  border-radius: 6px;
+  padding: 6px 16px;
+  font-weight: 900;
+  font-stretch: 62%;
+  font-size: 40px;
+  line-height: 1;
+  background: rgba(247, 248, 243, 0.9);
+  transform: rotate(-8deg);
+  animation: stampIn 380ms var(--ease-out) both;
+  pointer-events: none;
+}
+@keyframes stampIn {
+  from {
+    opacity: 0;
+    transform: rotate(-14deg) scale(1.35);
+  }
+  to {
+    opacity: 1;
+    transform: rotate(-8deg) scale(1);
+  }
+}
+
+/* Seats ----------------------------------------------------------------------- */
+.seat-box {
+  width: 72px;
+  height: 72px;
+  border-radius: 10px 10px 4px 4px;
+  display: grid;
+  place-items: center;
+  font-weight: 800;
+  font-size: 22px;
+  font-stretch: 72%;
+  transition: background-color 220ms ease, color 220ms ease, transform 220ms var(--ease-out);
+}
+.seat-filled {
+  background: var(--ink);
+  color: var(--signal);
+  border: 2px solid var(--ink);
+  animation: punch 300ms var(--ease-out) both;
+}
+.seat-empty {
+  background: transparent;
+  color: var(--muted);
+  border: 2px dashed var(--dash);
+}
+.seat-you {
+  box-shadow: 0 0 0 3px var(--stock), 0 0 0 6px var(--money);
+}
+@keyframes punch {
+  from {
+    transform: scale(1.12);
+  }
+  to {
+    transform: scale(1);
+  }
+}
+
+/* Route line ------------------------------------------------------------------ */
+.route-fill {
+  transition: width 420ms var(--ease-in-out);
+}
+
+/* Misc ------------------------------------------------------------------------ */
+.toast {
+  animation: toastIn 260ms var(--ease-out) both;
+}
+@keyframes toastIn {
+  from {
+    opacity: 0;
+    transform: translateY(12px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+.pulse-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--money);
+  animation: pulse 1.6s ease-in-out infinite;
+}
+@keyframes pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.3;
+  }
+}
+.skeleton {
+  background: linear-gradient(90deg, #dfe4d9 0%, #eef1ea 50%, #dfe4d9 100%);
+  background-size: 200% 100%;
+  animation: shimmer 1.2s linear infinite;
+  border-radius: 4px;
+}
+@keyframes shimmer {
+  from {
+    background-position: 200% 0;
+  }
+  to {
+    background-position: -200% 0;
+  }
+}
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .flap-anim,
+  .stamp,
+  .seat-filled,
+  .toast,
+  .pulse-dot,
+  .skeleton {
+    animation: none;
+  }
+  .route-fill {
+    transition: none;
+  }
+}
