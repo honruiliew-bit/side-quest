@@ -17,7 +17,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from . import engine, seed as seeding
-from .agent import builder, keeper
+from .agent import builder, keeper, shopper
 from .auth import PERSONAS, ensure_personas, get_or_create_user, issue_token, optional_user, require_user
 from .config import settings
 from .db import get_db
@@ -428,6 +428,26 @@ def chat(quest_id: str, body: ChatIn, user: User = Depends(require_user), db: Se
     reply = keeper.reply(db, q, user, body.text.strip())
     db.commit()
     return {"reply": reply, "quest": _detail(db, q, user)}
+
+
+# --- Your own assistant, connected over MCP ----------------------------------------------
+
+class AssistantMsg(BaseModel):
+    role: str = Field(pattern="^(user|assistant)$")
+    content: str = Field(min_length=1, max_length=2000)
+
+
+class AssistantIn(BaseModel):
+    messages: list[AssistantMsg] = Field(min_length=1, max_length=20)
+
+
+@router.post("/assistant/chat")
+def assistant_chat(body: AssistantIn, user: User = Depends(require_user)):
+    """The For AI agents page: an assistant that only has Sidequest's MCP tools."""
+    _rate_limit_chat(user.id)
+    if body.messages[-1].role != "user":
+        raise HTTPException(422, "The last message has to be from you.")
+    return shopper.chat(user, [m.model_dump() for m in body.messages])
 
 
 # --- PayPal webhooks -------------------------------------------------------------------

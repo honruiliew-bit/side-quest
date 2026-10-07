@@ -678,7 +678,11 @@ def read_receipt(quest: Quest, data: bytes, media_type: str) -> tuple[dict | Non
     try:
         return reader.read(quest, data, media_type), None
     except Exception as exc:  # the AI being down shouldn't block the host
-        return None, f"Couldn't read it automatically ({type(exc).__name__}). Check it by eye."
+        import logging
+
+        logging.getLogger("sidequest.receipts").warning("receipt read failed: %r", exc)
+        detail = getattr(exc, "message", None) or str(exc)
+        return None, f"Couldn't read it automatically ({type(exc).__name__}: {detail[:160]}). Check it by eye."
 
 
 def add_receipt(db: Session, quest: Quest, user: User, filename: str, media_type: str, data: bytes,

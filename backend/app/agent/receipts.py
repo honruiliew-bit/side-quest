@@ -14,15 +14,15 @@ def _tool(quest: Quest) -> dict:
     shared = [l["label"] for l in quest.cost_lines if l.get("split") == "shared"]
     return {
         "name": "read_receipt",
-        "description": "Report what this receipt shows. Use null for anything you cannot read clearly. Never guess a total.",
+        "description": "Report what this receipt shows. Leave out any field you cannot read clearly. Never guess a total.",
         "input_schema": {
             "type": "object",
             "properties": {
                 "is_receipt": {"type": "boolean", "description": "True only for a purchase receipt or invoice."},
                 "legible": {"type": "boolean", "description": "True if the total and date are clearly readable."},
-                "merchant": {"type": ["string", "null"]},
-                "date": {"type": ["string", "null"], "description": "Purchase date as YYYY-MM-DD"},
-                "total_usd": {"type": ["number", "null"], "description": "The final amount paid, including tax"},
+                "merchant": {"type": "string", "description": "Store or business name"},
+                "date": {"type": "string", "description": "Purchase date as YYYY-MM-DD"},
+                "total_usd": {"type": "number", "description": "The final amount paid, including tax"},
                 "category": {"type": "string", "enum": CATEGORIES},
                 "cost_line": {
                     "type": "string",
@@ -36,13 +36,13 @@ def _tool(quest: Quest) -> dict:
                                    "a sample or demo watermark, a different currency.",
                 },
             },
-            "required": ["is_receipt", "legible", "merchant", "date", "total_usd", "category", "cost_line", "concerns"],
+            "required": ["is_receipt", "legible", "category", "cost_line", "concerns"],
         },
     }
 
 
 SYSTEM = """You check receipts for a small group trip before anyone is charged extra.
-Read only what is printed. If a field isn't clearly visible, return null. Don't round or infer totals.
+Read only what is printed. If a field isn't clearly visible, leave it out. Don't round or infer totals.
 Mention any sign the image was edited, cropped to hide something, or is not a real purchase."""
 
 
