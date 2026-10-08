@@ -1,10 +1,15 @@
 # Sidequest
 
-Group adventures that only run if enough people commit.
+**Nobody pays unless the quest runs.**
 
-Everyone who joins places a PayPal **authorization hold** at the max price. Nobody is charged unless the quest reaches its minimum. When it locks, each hold is **captured at the final split**, which drops with every extra person. After the trip, the host is paid through **PayPal Payouts**. A Claude agent plans quests, runs the group chat, and handles dropouts, swaps and cost changes. It can only *propose* money moves, and the host approves each one.
+Group plans die in the group chat. Four people say "maybe", one person books the van, and that person ends up fronting the money and chasing everyone for it.
+<!-- After the real-user test, add one line here: how many people held spots and how many went. -->
 
-Built for the [PayPal AI Hackathon](https://paypalaihackathon.devpost.com).
+1. You join with a PayPal hold for the most you could pay. Nothing is charged.
+2. When enough people commit, the host locks and everyone pays the real split, which drops with every extra person.
+3. After the trip, Claude reads the receipts and settles the difference. The host is paid 24 hours later, unless someone reports a problem.
+
+**[Live demo](https://sidequest-web-q5pq.onrender.com)**: click **Take the 2-minute tour**. Built for the [PayPal AI Hackathon](https://paypalaihackathon.devpost.com).
 
 ![Quest page](docs/screens/quest.png)
 
@@ -137,7 +142,7 @@ The MCP endpoint is `https://<your-api>/mcp/` (streamable HTTP). Tools: `list_qu
 
 ## Host desk (AG Studio + Claude)
 
-The **Books** page is a host desk built with [AG Studio](https://www.ag-grid.com/studio/), AG Grid's embedded analytics component, themed to match the app.
+Hosts see a host desk on **My money**, built with [AG Studio](https://www.ag-grid.com/studio/), AG Grid's embedded analytics component, themed to match the app.
 
 - **Three related tables** from `GET /me/books`: quests, every PayPal event, and invoices. Hosts see everyone on their quests. Members see only their own rows.
 - **Pre-built dashboard:** net charged (with a weekly sparkline), paid out, still owed, collected by invoice, charges by quest, invoices by status, a weekly trend and a grid of every PayPal call. Click a quest button or a bar and everything cross-filters.
@@ -159,7 +164,7 @@ Each quest page also has a money log built on AG Grid Community, with filters, s
 | `sidequest-api` | Web service (Python) | FastAPI, the quest engine, PayPal, Claude, and the MCP server at `/mcp/` |
 | `sidequest-web` | Web service (Node) | The Next.js app |
 | `sidequest-db` | Render Postgres | All data. `DATABASE_URL` is wired in automatically. Tables are created on first start |
-| `sidequest-clock` | Cron Job, every 30 min | Runs `scripts/tick.py`: tips or cancels quests at their deadline, locks fares, releases escrowed host payouts |
+| `sidequest-clock` | Cron Job, every 30 min | Runs `scripts/tick.py`: starts or cancels quests at their deadline, locks fares, releases escrowed host payouts |
 | `sidequest-settle` | Workflow | Settle up: `settle_up` fans out one `send_invoice` task per person, each on its own instance with retries |
 
 **Why a Workflow for settle up.** Sending seven PayPal invoices is seven create-and-send round trips that can each fail on their own. On Render Workflows each one is a separate task run with automatic retries, and one failure doesn't stop the rest. Retries can't double-bill: every invoice gets a deterministic number (`SQ-<quest>-<member>-<cents>`), PayPal rejects a duplicate number, and the task then looks up the invoice it already sent. The tasks never touch the database. The API starts the run, waits for the results and applies them under the quest lock. If the run can't start, the API sends the invoices itself. If it starts but is slow, the API never resends, because approving again is idempotent. The money log notes which run sent each invoice. Code: `backend/workflows.py`, `backend/app/render_workflows.py`.
@@ -174,22 +179,17 @@ Keep `DEMO_MODE=1` for judging. It turns on one-click personas and the demo cont
 
 ## For judges: the two minute tour
 
-Click **Take the 2-minute tour** on the home page. You get a private copy of the hero quest, so your clicks never collide with another judge's, and a checklist that walks the full PayPal lifecycle:
+Click **Take the 2-minute tour** on the home page. You get a private copy of the hero quest, so your clicks never collide with another judge's, and a bar at the bottom walks you through five steps:
 
-1. **Hold your spot** as Leo with the real PayPal button. Seat 5 fills and the quest tips.
-2. **Fill the van.** Everyone's share drops from $81.00 to $67.29.
-3. **Lock and charge** as Hon, the host. PayPal captures every hold at the final split.
-4. **Drop out after paying** as Dev. The agent turns it into a swap request for the host.
-5. **Approve the swap.** The standby hold is captured and Dev is refunded.
-6. **Settle up with receipts.** Add the sample gas receipt. Claude reads it, and each person gets a PayPal invoice for the overage with the receipt linked.
-7. **Pay the host.** In real use this releases on its own 24 hours after the trip. The demo skips the wait.
+1. **Hold your spot** as Leo with the real PayPal button. Seat 5 fills and the quest runs.
+2. **It's on: lock and charge.** More people join, the share drops from $81.00 to $67.29, and the host locks. PayPal captures every hold at the final split.
+3. **Someone drops out.** Dev tells the group chat he's sick. Claude can't move money, so it asks the host, who approves the swap: the standby is charged and Dev is refunded.
+4. **Settle up from a receipt.** Claude reads the gas receipt, and each person gets a PayPal invoice for their share with the receipt linked.
+5. **The host gets paid.** In real use this releases on its own 24 hours after the trip. The demo skips the wait.
 
-Each step switches to the right person for you. The PayPal sandbox buyer login is shown inside step 1. The money log on the quest page lists every PayPal call with its ID.
+Each step switches to the right person for you. The PayPal sandbox buyer login is shown in step 1. The money log on the quest page lists every PayPal call with its ID.
 
-Other things to try:
-- Open any quest from **Departures** to see the invite page a new person gets before joining.
-- On **For AI agents**, call the MCP tools from the browser and get a PayPal approval link back.
-- Use **Demo controls** on the other quests to add people or jump to a deadline.
+Then open **My money** as Hon for the host desk: press **Nudge** on Leo, or **Edit with Claude** and **Nudge the oldest invoice**. **For AI agents** is linked in the footer.
 
 ## Tests
 

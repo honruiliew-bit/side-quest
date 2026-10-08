@@ -1,7 +1,7 @@
 import { money } from "@/lib/format";
 import type { QuestDetail } from "@/lib/types";
 
-/** The PayPal lifecycle drawn as a rail line: authorize, tip, capture, payout. */
+/** The PayPal lifecycle drawn as a rail line: hold, it's on, charged, host paid. */
 export function MoneyRoute({ q }: { q: QuestDetail }) {
   const cancelled = q.status === "cancelled";
   const stage = cancelled ? 1 : q.stage;
@@ -10,22 +10,22 @@ export function MoneyRoute({ q }: { q: QuestDetail }) {
     {
       title: "Holds placed",
       detail: cancelled
-        ? "Every hold was voided"
+        ? "Every hold was released"
         : q.status === "open" || q.status === "on"
           ? `${q.headcount} holds, ${money(q.money.held_cents)} held by PayPal`
           : `${q.headcount} holds at ${money(q.hold_cents)}`,
       api: "Orders v2, intent AUTHORIZE",
     },
     {
-      title: "Quest tips",
+      title: "It's on",
       detail: cancelled ? "Didn't reach the minimum" : stage >= 2 ? `Seat ${q.min_people} filled. It runs.` : `${q.min_people - q.headcount} more needed`,
-      api: "Minimum reached",
+      api: "Live split",
     },
     {
       title: "Everyone charged",
       detail: stage >= 3
         ? `${money(q.money.charged_cents - q.money.refunded_cents)} kept at ${money(q.share_cents)} each${q.money.refunded_cents ? `, ${money(q.money.refunded_cents)} refunded` : ""}`
-        : "At the final split, never above the hold",
+        : "The final split, never more than you approved",
       api: "Capture authorization",
     },
     {

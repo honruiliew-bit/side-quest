@@ -110,7 +110,7 @@ function Fare({ q, onChange }: { q: QuestDetail; onChange: (q: QuestDetail) => v
     }
   };
 
-  let label = "Max hold";
+  let label = "Most you'll pay";
   let amount = q.hold_cents;
   let note = `Drops to ${money(lowest)} if ${q.max_people} people join.`;
   if (q.status === "on") {
@@ -136,7 +136,7 @@ function Fare({ q, onChange }: { q: QuestDetail; onChange: (q: QuestDetail) => v
 
   return (
     <>
-      <div>
+      <div id="hold-spot" className="scroll-mt-24">
         <div className="label">{label}</div>
         <div className="tab text-[60px] font-extrabold leading-none text-money condensed sm:text-[64px]">{money(amount)}</div>
         <p className="mt-2 text-[14px] text-muted">{note}</p>
@@ -157,7 +157,7 @@ function Fare({ q, onChange }: { q: QuestDetail; onChange: (q: QuestDetail) => v
       {isHost && q.status === "on" && (
         <button className="btn btn-ink-signal w-full" disabled={!!busy} onClick={() => act("lock", `/quests/${q.id}/lock`, "", {
           title: "Lock the quest and charge everyone?",
-          body: `PayPal captures ${money(q.share_cents)} from each of the ${q.headcount} holds. Everyone authorized ${money(q.hold_cents)}, so nobody pays more than they agreed to. Standby holds stay in place until the trip.`,
+          body: `PayPal charges each of the ${q.headcount} people ${money(q.share_cents)}. Everyone approved up to ${money(q.hold_cents)}, so nobody pays more than they agreed to. Standby holds stay in place until the trip.`,
           action: `Charge ${q.headcount} × ${money(q.share_cents)}`,
         })}>
           {busy === "lock" ? "Charging" : "Lock and charge everyone"}
@@ -168,7 +168,7 @@ function Fare({ q, onChange }: { q: QuestDetail; onChange: (q: QuestDetail) => v
       {activeMine && (activeMine.status === "held" || activeMine.status === "standby") && (
         <button className="btn btn-ghost btn-sm w-full" disabled={!!busy} onClick={() => act("leave", `/quests/${q.id}/leave`, "You left. Your hold was released.", {
           title: "Leave this quest?",
-          body: `PayPal voids your ${money(activeMine.hold_cents)} hold right away. You won't be charged anything.`,
+          body: `PayPal releases your ${money(activeMine.hold_cents)} hold right away. You won't be charged anything.`,
           action: "Leave and release",
           tone: "danger",
         })}>

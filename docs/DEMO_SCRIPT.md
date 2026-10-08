@@ -12,17 +12,17 @@ Judging weighs presentation equally with the other four criteria, and Best Demo 
 
 **Visual:** Home page. The departure board flips in.
 
-**Voice:** "Sidequest is a group trip that only runs if enough people commit. You hold your spot with PayPal. Nobody pays unless it happens, and every extra person makes it cheaper for everyone."
+**Voice:** "Sidequest has one rule: nobody pays unless the quest runs. You hold your spot with PayPal, nothing is charged until enough people commit, and every extra person makes it cheaper for everyone."
 
 ## 0:30 to 1:05. The hero moment
 
 **Visual:** Open the invite link for Apple picking, the page a friend would get. Point at the faces, 1 seat to go, and "Up to $81.00". Click Hold, approve on PayPal's sandbox page. The full quest page opens: the board flips to IT'S ON, the stamp lands, the money route moves.
 
-**Voice:** "That's a real PayPal authorization at the max price. Seat five just filled, so the quest is on. Two more people join..." (Demo controls, add 2) "...and everyone's share drops from $81 to $67.29."
+**Voice:** "That's a real PayPal authorization at the max price. Seat five just filled, so the quest is on. Two more people join..." (the tour bar adds them) "...and everyone's share drops from $81 to $67.29."
 
 ## 1:05 to 1:25. Lock and charge
 
-**Visual:** Switch to Hon. Lock and charge. Money route reaches Everyone charged. Scroll the money log, click the Charges filter, then cut to Books for one second.
+**Visual:** Switch to Hon. Lock and charge. Money route reaches Everyone charged. Scroll the money log, click the Charges filter, then cut to the host desk on My money for one second.
 
 **Voice:** "When the host locks, PayPal captures each hold at the final split. Never more than anyone approved. Every call is in the log with its PayPal ID, and webhooks confirm each one. Hosts get the whole book, exportable."
 

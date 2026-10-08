@@ -21,7 +21,7 @@ export const initialState: AgReportState<SidequestRegistry> = {
           format: kpi("Net charged"),
           dataMapping: { value: [{ id: "ledger.net", aggregation: "sum" }], sparklineX: [{ id: "ledger.at::week" }] },
         },
-        paidOut: { type: "value", format: kpi("Paid out to hosts"), dataMapping: { value: [{ id: "ledger.paid_out", aggregation: "sum" }] } },
+        paidOut: { type: "value", format: kpi("Paid out to you"), dataMapping: { value: [{ id: "ledger.paid_out", aggregation: "sum" }] } },
         owed: { type: "value", format: kpi("Still owed"), dataMapping: { value: [{ id: "dues.amount", aggregation: "sum" }] } },
         collected: { type: "value", format: kpi("Collected by invoice"), dataMapping: { value: [{ id: "ledger.collected", aggregation: "sum" }] } },
         questFilter: {

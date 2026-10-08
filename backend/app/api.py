@@ -139,10 +139,13 @@ def auth_signin(body: SignInIn, db: Session = Depends(get_db)):
 
 @router.get("/me")
 def me(user: User = Depends(require_user), db: Session = Depends(get_db)):
-    rows = db.scalars(select(Membership).where(Membership.user_id == user.id,
-                                               Membership.status.notin_(["abandoned", "pending"]))
+    # Tour copies are private demo quests. They'd crowd out real ones, so they stay off this page.
+    rows = db.scalars(select(Membership).join(Quest, Quest.id == Membership.quest_id)
+                      .where(Membership.user_id == user.id, Membership.status.notin_(["abandoned", "pending"]),
+                             Quest.tour.isnot(True))
                       .order_by(Membership.created_at.desc())).all()
-    hosting = db.scalars(select(Quest).where(Quest.host_id == user.id).order_by(Quest.starts_at)).all()
+    hosting = db.scalars(select(Quest).where(Quest.host_id == user.id, Quest.tour.isnot(True))
+                         .order_by(Quest.starts_at)).all()
     return {
         "user": user_out(user),
         "memberships": [{**membership_out(m), "quest": quest_card(m.quest)} for m in rows],

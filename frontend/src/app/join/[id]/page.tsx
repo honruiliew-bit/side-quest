@@ -223,7 +223,7 @@ export default function JoinPage({ params }: { params: { id: string } }) {
               </li>
             </ul>
           </section>
-          <section aria-labelledby="own-h" className="panel flex flex-col gap-3 p-6">
+          <section aria-labelledby="own-h" className="panel flex flex-col gap-3 self-start p-6">
             <h2 id="own-h" className="h3">You pay for yourself</h2>
             {payOwn.length ? (
               <ul className="flex flex-col gap-2 text-[16px]">

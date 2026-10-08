@@ -1,7 +1,8 @@
 "use client";
 
 import Link from "next/link";
-import { usePathname } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
+import { api } from "@/lib/api";
 import { useEffect, useRef, useState } from "react";
 import { useSession } from "@/lib/session";
 import { Avatar } from "./Avatar";
@@ -9,9 +10,7 @@ import { Avatar } from "./Avatar";
 const NAV = [
   { href: "/", label: "Departures" },
   { href: "/new", label: "Start a quest" },
-  { href: "/me", label: "My holds" },
-  { href: "/books", label: "Books" },
-  { href: "/agents", label: "For AI agents" },
+  { href: "/me", label: "My money" },
 ];
 
 export function Header() {
@@ -29,7 +28,7 @@ export function Header() {
         </Link>
         <nav aria-label="Main" className="order-3 flex w-full flex-wrap gap-x-6 gap-y-1 text-[15px] font-medium sm:order-none sm:w-auto">
           {NAV.map((n) => {
-            const active = n.href === "/" ? path === "/" : path.startsWith(n.href);
+            const active = n.href === "/" ? path === "/" : path.startsWith(n.href) || (n.href === "/me" && path.startsWith("/books"));
             return (
               <Link
                 key={n.href}
@@ -51,16 +50,19 @@ export function Header() {
               {config.paypal_mode === "sandbox" ? "PayPal sandbox" : "Mock PayPal"}
             </span>
           )}
-          <PersonaSwitcher />
+          <DemoMenu />
         </div>
       </div>
     </header>
   );
 }
 
-function PersonaSwitcher() {
+/** One small menu for everything demo-only: who you are playing, and a reset. */
+function DemoMenu() {
   const { user, personas, signInAs, signIn, signOut, config, toast } = useSession();
+  const router = useRouter();
   const [open, setOpen] = useState(false);
+  const [resetting, setResetting] = useState(false);
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
   const ref = useRef<HTMLDivElement>(null);
@@ -90,7 +92,7 @@ function PersonaSwitcher() {
       >
         {user ? <Avatar user={user} size={34} /> : <span className="h-[34px] w-[34px] rounded-full border-2 border-dashed border-stock/50" />}
         <span className="text-left leading-tight">
-          <span className="block text-[11px] text-stock/70">{config?.demo_mode ? "Viewing as" : "Signed in"}</span>
+          <span className="block text-[11px] text-stock/70">{config?.demo_mode ? "Demo as" : "Signed in"}</span>
           <span className="block font-semibold">{user?.name ?? "Guest"}</span>
         </span>
         <svg width="12" height="12" viewBox="0 0 12 12" aria-hidden="true" className={`transition-transform duration-150 ${open ? "rotate-180" : ""}`}>
@@ -104,7 +106,7 @@ function PersonaSwitcher() {
         >
           {personas.length > 0 && (
             <>
-              <p className="px-1 pb-2 text-[13px] text-muted">Switch person to play every side of a quest.</p>
+              <p className="px-1 pb-2 text-[13px] text-muted">Demo mode. Switch person to play every side of a quest: Hon hosts, everyone else joins.</p>
               <div className="grid grid-cols-2 gap-1">
                 {personas.map((p) => (
                   <button
@@ -129,8 +131,32 @@ function PersonaSwitcher() {
               <hr className="my-3 border-rule" />
             </>
           )}
+          {config?.demo_mode && (
+            <button
+              type="button"
+              className="mb-3 w-full rounded px-2 py-2 text-left text-[14px] font-semibold hover:bg-paper"
+              disabled={resetting}
+              onClick={async () => {
+                setResetting(true);
+                try {
+                  await api("/demo/reset", { method: "POST" });
+                  setOpen(false);
+                  toast("Demo data reset.");
+                  router.push("/");
+                } catch (e) {
+                  toast(e instanceof Error ? e.message : "Reset failed.", "error");
+                } finally {
+                  setResetting(false);
+                }
+              }}
+            >
+              {resetting ? "Resetting..." : "Reset all demo data"}
+            </button>
+          )}
+          <details>
+          <summary className="cursor-pointer px-1 py-1 text-[13px] font-semibold">Sign in as yourself</summary>
           <form
-            className="flex flex-col gap-2"
+            className="mt-2 flex flex-col gap-2"
             onSubmit={async (e) => {
               e.preventDefault();
               try {
@@ -141,13 +167,13 @@ function PersonaSwitcher() {
               }
             }}
           >
-            <span className="px-1 text-[13px] font-semibold">Or sign in as yourself</span>
             <label className="sr-only" htmlFor="si-name">Name</label>
             <input id="si-name" className="field" placeholder="Name" value={name} onChange={(e) => setName(e.target.value)} required autoComplete="name" />
             <label className="sr-only" htmlFor="si-email">Email</label>
             <input id="si-email" className="field" type="email" placeholder="Email" value={email} onChange={(e) => setEmail(e.target.value)} required autoComplete="email" />
             <button className="btn btn-ink btn-sm" type="submit">Sign in</button>
           </form>
+          </details>
           {user && (
             <button type="button" className="mt-2 w-full py-2 text-[14px] text-muted underline" onClick={() => { signOut(); setOpen(false); }}>
               Sign out

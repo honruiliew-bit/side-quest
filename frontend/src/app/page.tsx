@@ -50,9 +50,10 @@ export default function Home() {
         <div className="mx-auto flex max-w-page flex-col gap-10 px-4 pb-14 pt-10 sm:px-10">
           <div className="flex flex-wrap items-end justify-between gap-8">
             <div className="flex max-w-[640px] flex-col gap-5">
-              <h1 id="hero-h" className="display text-[52px] sm:text-[76px]">Weekend plans that only run if the group commits.</h1>
+              <h1 id="hero-h" className="display text-[52px] sm:text-[76px]">Nobody pays unless the quest runs.</h1>
               <p className="max-w-[52ch] text-[18px] leading-relaxed">
-                Hold your spot with PayPal. Nobody pays unless the quest runs, and every extra person lowers everyone's share.
+                Group plans fall apart when people flake. On Sidequest you hold your spot with PayPal, nothing is charged until
+                enough people commit, and every extra person lowers everyone's share.
               </p>
               <div className="flex flex-wrap gap-3">
                 {config?.demo_mode && (
@@ -63,7 +64,7 @@ export default function Home() {
                 <Link href="/new" className={`btn ${config?.demo_mode ? "btn-ghost" : "btn-ink"}`}>Start a quest</Link>
               </div>
               {config?.demo_mode && (
-                <p className="text-[14px]">The tour gives you a private quest and walks you through every PayPal step.</p>
+                <p className="text-[14px]">Five clicks on your own private quest. You play every person, so you don't need friends to try it.</p>
               )}
             </div>
             <Board text="NOW BOARDING" size="lg" label="Now boarding" />
@@ -74,7 +75,30 @@ export default function Home() {
               <span>Departures</span>
               <span className="text-stock/70">Live</span>
             </div>
-            <div className="overflow-x-auto">
+            <ul className="divide-y divide-white/10 border-t border-white/15 sm:hidden">
+              {quests === null && <li className="px-5 py-5"><div className="h-6 w-2/3 rounded bg-white/10" /></li>}
+              {upcoming.map((q) => (
+                <li key={q.id}>
+                  <Link href={`/join/${q.id}`} className="flex flex-col gap-2 px-4 py-4 text-stock no-underline">
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="min-w-0">
+                        <div className="text-[13px] text-stock/70">{dayShort(q.starts_at, q.tz)}, {clock(q.starts_at, q.tz)}</div>
+                        <div className="text-[19px] font-bold leading-tight" style={{ fontStretch: "80%" }}>{q.title}</div>
+                        <div className="text-[13px] text-stock/70">Hosted by {q.host.name}</div>
+                      </div>
+                      <div className="shrink-0 text-right">
+                        <div className="tab text-[20px] font-extrabold" style={{ fontStretch: "72%" }}>
+                          {q.status === "locked" ? money(q.share_cents) : money(q.hold_cents)}
+                        </div>
+                        <div className="text-[12px] text-stock/70">{q.status === "locked" ? "final split" : `down to ${money(q.lowest_cents)}`}</div>
+                      </div>
+                    </div>
+                    <Board text={statusBoard(q.status, q.headcount, q.min_people, q.max_people)} length={12} size="sm" />
+                  </Link>
+                </li>
+              ))}
+            </ul>
+            <div className="hidden overflow-x-auto sm:block">
               <table className="tab w-full min-w-[760px] border-collapse">
                 <thead>
                   <tr className="border-y border-white/15 text-left text-[13px] text-stock/70">
@@ -141,10 +165,10 @@ export default function Home() {
           <h2 id="how-h" className="h2">How a quest works</h2>
           <ol className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
             {[
-              { t: "Hold your spot", d: "PayPal authorizes the max price, the share if only the minimum shows up. Nothing is charged.", a: "Orders v2, intent AUTHORIZE" },
-              { t: "The quest tips", d: "Once the minimum commits, it's on. More people can still join and the share keeps dropping.", a: "Live split" },
-              { t: "Everyone is charged", d: "At the deadline each hold is captured at the final split. Never more than you approved.", a: "Capture authorization" },
-              { t: "The host is paid", d: "After the trip the host gets paid out. Dropouts and cost changes go through the agent and the host.", a: "Payouts, Refunds, Invoicing" },
+              { t: "Hold your spot", d: "PayPal holds the most you could pay. Nothing leaves your account.", a: "Orders v2, intent AUTHORIZE" },
+              { t: "It's on", d: "Once enough people commit, the quest runs. More people means a smaller share for everyone.", a: "Live split" },
+              { t: "Pay the real split", d: "When the host locks, you're charged the final share. Never more than you approved.", a: "Capture authorization" },
+              { t: "The host gets paid", d: "After the trip. Dropouts get refunds, extra costs get invoices from receipts, and Claude handles the admin.", a: "Payouts, Refunds, Invoicing" },
             ].map((s, i) => (
               <li key={s.t} className="panel flex flex-col gap-3 p-5">
                 <span className="grid h-9 w-9 place-items-center rounded-full bg-ink font-black text-signal" style={{ fontStretch: "62%" }}>{i + 1}</span>

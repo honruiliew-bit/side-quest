@@ -20,17 +20,18 @@ const TOOL_LABEL: Record<string, string> = {
 };
 
 function opLine(a: ProposalAction, locked: boolean): string {
+  // Plain words first, the PayPal call in brackets for anyone checking.
   switch (a.type) {
     case "void_hold":
-      return `Void authorization ${a.ref ?? ""}. ${money(a.cents)} released to ${a.name}.`;
+      return `Release ${a.name}'s ${money(a.cents)} hold. They pay nothing. (PayPal void ${a.ref ?? ""})`;
     case "promote":
       return locked
-        ? `Capture ${a.name}'s authorization ${a.ref ?? ""} at ${money(a.cents)}.`
+        ? `Charge ${a.name} ${money(a.cents)} from their standby hold. (PayPal capture ${a.ref ?? ""})`
         : `Move ${a.name} from standby into a seat. Their hold stays.`;
     case "refund":
-      return `Refund capture ${a.ref ?? ""}. ${money(a.cents)} back to ${a.name}.`;
+      return `Refund ${a.name} ${money(a.cents)}. (PayPal refund ${a.ref ?? ""})`;
     case "invoice":
-      return `Send ${a.name} a PayPal invoice for ${money(a.cents)} with the Agent Toolkit, receipts linked.`;
+      return `Send ${a.name} a PayPal invoice for ${money(a.cents)}, receipts linked. (Agent Toolkit)`;
   }
 }
 

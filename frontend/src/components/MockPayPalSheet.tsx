@@ -52,7 +52,7 @@ export function MockPayPalSheet({
         <div className="tab text-[40px] font-extrabold leading-none text-money" style={{ fontStretch: "62%" }}>
           {money(amountCents)}
         </div>
-        <p className="mt-2 text-[14px]">This is an authorization, not a charge. You're only charged the final split if the quest runs.</p>
+        <p className="mt-2 text-[14px]">This is a hold, not a charge. You only pay the final split if the quest runs.</p>
       </div>
       <p className="mt-4 text-[13px] text-muted">
         In sandbox mode this step happens on PayPal's own page. Mock mode simulates it so the app runs without keys.

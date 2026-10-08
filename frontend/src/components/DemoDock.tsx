@@ -1,6 +1,5 @@
 "use client";
 
-import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { api } from "@/lib/api";
 import { useSession } from "@/lib/session";
@@ -9,7 +8,6 @@ import type { QuestDetail } from "@/lib/types";
 /** Judges can't recruit five friends. This adds simulated people and moves the clock. */
 export function DemoDock({ q, onChange }: { q: QuestDetail; onChange: (q: QuestDetail) => void }) {
   const { config, toast } = useSession();
-  const router = useRouter();
   const [open, setOpen] = useState(false);
   const [busy, setBusy] = useState<string | null>(null);
   if (!config?.demo_mode) return null;
@@ -31,11 +29,11 @@ export function DemoDock({ q, onChange }: { q: QuestDetail; onChange: (q: QuestD
   };
 
   return (
-    <div className="fixed bottom-4 left-4 z-40">
+    <div className="fixed bottom-4 right-4 z-40">
       {open ? (
         <div className="toast w-[280px] rounded-md border-2 border-ink bg-stock p-4 shadow-[0_6px_0_var(--ink)]" role="region" aria-label="Demo controls">
           <div className="flex items-center justify-between">
-            <span className="font-bold">Demo controls</span>
+            <span className="font-bold">Simulate people</span>
             <button className="min-h-[36px] px-2 text-[14px] underline" onClick={() => setOpen(false)}>Hide</button>
           </div>
           <p className="mt-1 text-[13px] text-muted">Simulated people place test holds so you can see the whole lifecycle alone.</p>
@@ -54,25 +52,12 @@ export function DemoDock({ q, onChange }: { q: QuestDetail; onChange: (q: QuestD
               onClick={() => run("deadline", `/demo/quests/${q.id}/deadline`, {}, "Jumped to the join deadline.")}>
               {busy === "deadline" ? "Moving the clock" : "Jump to the join deadline"}
             </button>
-            <button className="btn btn-ghost btn-sm" disabled={!!busy}
-              onClick={async () => {
-                setBusy("reset");
-                try {
-                  await api("/demo/reset", { method: "POST" });
-                  toast("Demo data reset.");
-                  router.push("/");
-                } catch (e) {
-                  toast(e instanceof Error ? e.message : "Reset failed.", "error");
-                  setBusy(null);
-                }
-              }}>
-              {busy === "reset" ? "Resetting" : "Reset all demo data"}
-            </button>
+
           </div>
         </div>
       ) : (
-        <button className="btn btn-ink btn-sm shadow-[0_4px_0_var(--signal)]" onClick={() => setOpen(true)} aria-expanded={false}>
-          Demo controls
+        <button className="btn btn-ghost btn-sm bg-stock" onClick={() => setOpen(true)} aria-expanded={false}>
+          Demo: simulate people
         </button>
       )}
     </div>

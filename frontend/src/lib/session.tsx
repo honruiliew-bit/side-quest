@@ -19,7 +19,7 @@ type Session = {
 
 const Ctx = createContext<Session | null>(null);
 
-const DEFAULT_PERSONA = "leo";
+const DEFAULT_PERSONA = "hon"; // The host: My money opens on the host desk, the richest view for a first visit.
 const USER_KEY = "sidequest.user";
 
 export function SessionProvider({ children }: { children: React.ReactNode }) {
@@ -113,7 +113,7 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
   return (
     <Ctx.Provider value={value}>
       {children}
-      <div aria-live="polite" className="fixed bottom-4 left-4 right-4 z-50 flex flex-col items-start gap-2 sm:left-auto sm:right-6 sm:items-end">
+      <div aria-live="polite" className="fixed left-4 right-4 top-20 z-50 flex flex-col items-start gap-2 sm:left-auto sm:right-6 sm:items-end">
         {toasts.map((t) => (
           <div
             key={t.id}
