@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { api } from "@/lib/api";
 import { money } from "@/lib/format";
 import { useSession } from "@/lib/session";
@@ -38,6 +38,14 @@ export function TourPanel({ q, onChange }: { q: QuestDetail; onChange: (q: Quest
   const [open, setOpen] = useState(true);
   const [list, setList] = useState(false);
   const [busy, setBusy] = useState(false);
+
+  // Lets Scout move up out of the bar's way on narrow screens.
+  useEffect(() => {
+    document.body.dataset.tour = open ? "on" : "";
+    return () => {
+      document.body.dataset.tour = "";
+    };
+  }, [open]);
 
   const held = [...q.seats.flatMap((s) => (s.member ? [s.member] : [])), ...q.standby].filter((m) => m.status === "held");
   const leoIn = q.ledger.some((e) => e.kind === "hold" && e.user?.persona === "leo");

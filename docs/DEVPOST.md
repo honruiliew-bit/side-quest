@@ -20,7 +20,7 @@ PayPal already has the right building block: authorize now, capture later. Sideq
 Around that core:
 - **Escrowed payout.** The host is paid through PayPal Payouts 24 hours after the trip, unless a member reports a problem.
 - **Host desk.** An AG Studio dashboard of every payment and who still owes, with nudges sent through PayPal's invoice reminders and Claude to build any view.
-- **Agentic commerce.** Sidequest is an MCP server. Claude, ChatGPT or any MCP client can find a quest and start a hold. You still approve it on PayPal.
+- **Agentic commerce.** Sidequest is an MCP server. Claude, ChatGPT or any MCP client can find a quest and start a hold. You still approve it on PayPal. Scout, a small assistant in the corner of every page, uses the same four tools, so judges can try it without installing anything.
 
 ## Business model
 

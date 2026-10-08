@@ -2,6 +2,7 @@ import type { Metadata, Viewport } from "next";
 import "./globals.css";
 import Link from "next/link";
 import { Header } from "@/components/Header";
+import { Scout } from "@/components/Scout";
 import { SessionProvider } from "@/lib/session";
 
 export const metadata: Metadata = {
@@ -28,6 +29,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
               <p>Built for the PayPal AI Hackathon with PayPal Orders, Payments, Payouts, Invoicing, the Agent Toolkit, Claude, AG Studio and Render.</p>
             </div>
           </footer>
+          <Scout />
         </SessionProvider>
       </body>
     </html>

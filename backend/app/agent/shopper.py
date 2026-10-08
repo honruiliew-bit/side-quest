@@ -83,7 +83,19 @@ def _result(reply: str, trace: list[dict], engine: str) -> dict:
 
 def _offline(user: User, messages: list[dict], handle, trace: list[dict]) -> dict:
     """Rule-based stand-in so the page still works without an Anthropic key."""
-    text = str(messages[-1]["content"]).lower()
+    raw = str(messages[-1]["content"])
+    text = raw.lower()
+    # "Tell me about quest <id>" from Scout on a quest page.
+    asked = re.search(r"\bquest (q_[A-Za-z0-9]+)", raw)
+    if asked and not re.search(r"\b(hold|join|book|reserve)\b", text):
+        q = handle("get_quest", {"quest_id": asked.group(1)})
+        if isinstance(q, dict) and not q.get("error"):
+            names = ", ".join(q.get("going_names") or []) or "nobody yet"
+            return _result(
+                f"{q['title']}: {q['going']}. Going: {names}.\n"
+                f"You'd hold up to {q['max_price']}, and it drops to {q['price_if_full']} if it fills. "
+                f"You're only charged when the host locks, and only if it runs. Want me to hold you a spot?",
+                trace, "offline")
     price = re.search(r"\$?(\d{2,4})", text)
     wants_hold = re.search(r"\b(hold|join|book|sign me up|i'?m in|reserve)\b", text)
     quests = handle("list_quests", {"max_price_usd": float(price.group(1))} if price and not wants_hold else {})

@@ -199,17 +199,6 @@ export default function Home() {
             </div>
           </section>
         )}
-
-        <section className="panel flex flex-wrap items-center justify-between gap-6 p-6 sm:p-8">
-          <div className="max-w-[60ch]">
-            <h2 className="h2">Let your AI assistant find a quest for you</h2>
-            <p className="mt-2 text-[16px] leading-relaxed">
-              Sidequest is also an MCP server. Ask Claude or ChatGPT for "something cheap to do Saturday", and it can find a
-              quest and hold your spot. You still approve every hold on PayPal.
-            </p>
-          </div>
-          <Link href="/agents" className="btn btn-ink">Connect an assistant</Link>
-        </section>
       </main>
     </>
   );

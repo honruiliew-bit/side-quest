@@ -423,3 +423,28 @@ textarea.field {
     transition: none;
   }
 }
+
+/* Scout, the assistant ------------------------------------------------------- */
+@keyframes scout-blink {
+  0%, 92%, 100% { transform: scaleY(1); }
+  95% { transform: scaleY(0.1); }
+}
+@keyframes scout-bob {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-4px); }
+}
+@keyframes scout-in {
+  from { transform: translateY(12px); opacity: 0; }
+  to { transform: none; opacity: 1; }
+}
+.scout-blink { transform-origin: 32px 37px; animation: scout-blink 4.5s infinite; }
+.scout-bob { animation: scout-bob 3.2s ease-in-out infinite; }
+.scout-bob:hover { animation-play-state: paused; }
+.scout-drawer { animation: scout-in 180ms cubic-bezier(0.2, 0.8, 0.2, 1); }
+/* Sit above the guided demo bar where the two would overlap. */
+@media (max-width: 960px) {
+  body[data-tour="on"] .scout-launcher { bottom: 15rem; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .scout-blink, .scout-bob, .scout-drawer { animation: none; }
+}

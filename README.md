@@ -30,7 +30,7 @@ Most group payments collect money first and sort out refunds later. Sidequest us
 | Webhooks with signature verification | `CHECKOUT.ORDER.APPROVED` places holds for link-based approvals. Capture, void, refund and payout events confirm the money log. |
 | JS SDK Smart Buttons | PayPal, Venmo and cards, with `intent=authorize`. Pay Later is turned off because installments can't be held. |
 
-And for agentic commerce: **Sidequest is an MCP server.** Claude, ChatGPT or any MCP client can find quests and start a hold. The person approves the hold on PayPal's own page, so an agent can commit you to a plan but can never spend without you.
+And for agentic commerce: **Sidequest is an MCP server.** Scout, the assistant in the corner of every page, runs on the same four MCP tools, so you can try it without installing anything. Claude, ChatGPT or any MCP client can find quests and start a hold. The person approves the hold on PayPal's own page, so an agent can commit you to a plan but can never spend without you.
 
 ## How it works
 

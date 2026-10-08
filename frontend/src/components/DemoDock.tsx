@@ -29,7 +29,7 @@ export function DemoDock({ q, onChange }: { q: QuestDetail; onChange: (q: QuestD
   };
 
   return (
-    <div className="fixed bottom-4 right-4 z-40">
+    <div className="fixed bottom-4 left-4 z-40">
       {open ? (
         <div className="toast w-[280px] rounded-md border-2 border-ink bg-stock p-4 shadow-[0_6px_0_var(--ink)]" role="region" aria-label="Demo controls">
           <div className="flex items-center justify-between">
