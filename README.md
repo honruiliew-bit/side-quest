@@ -2,37 +2,114 @@
 
 **Nobody pays unless the quest runs.**
 
+[![CI](https://github.com/honruiliew-bit/side-quest/actions/workflows/ci.yml/badge.svg)](https://github.com/honruiliew-bit/side-quest/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/license-MIT-1a2130.svg)](LICENSE)
+[![Live demo](https://img.shields.io/badge/live%20demo-Render-ffc93c.svg)](https://sidequest-web-q5pq.onrender.com)
+
 Group plans die in the group chat. Four people say "maybe", one person books the van, and that person ends up fronting the money and chasing everyone for it.
 <!-- After the real-user test, add one line here: how many people held spots and how many went. -->
 
-1. You join with a PayPal hold for the most you could pay. Nothing is charged.
-2. When enough people commit, the host locks and everyone pays the real split, which drops with every extra person.
-3. After the trip, Claude reads the receipts and settles the difference. The host is paid 24 hours later, unless someone reports a problem.
+Sidequest fixes the commitment problem with a payment primitive PayPal already has: **authorize now, capture later.**
 
-**[Live demo](https://sidequest-web-q5pq.onrender.com)**: click **Take the 2-minute tour**. Built for the [PayPal AI Hackathon](https://paypalaihackathon.devpost.com).
+1. **Hold your spot.** You approve a PayPal hold for the most you could pay. Nothing is charged.
+2. **It runs or it doesn't.** When enough people commit, the host locks and everyone pays the real split, which drops with every extra person. If not enough people commit, every hold is released.
+3. **Claude does the admin.** It swaps dropouts with people on standby, reads receipts to settle up with refunds or PayPal invoices, and the host is paid 24 hours after the trip. Claude only proposes money moves. The host approves each one.
 
-![Quest page](docs/screens/quest.png)
+**[Try the live demo](https://sidequest-web-q5pq.onrender.com)** and click **Take the 2-minute tour**. Built for the [PayPal AI Hackathon](https://paypalaihackathon.devpost.com).
 
-## Why it's different
+![Sidequest home page](docs/screens/home.png)
 
-Most group payments collect money first and sort out refunds later. Sidequest uses the authorize-then-capture model PayPal already has, so the group's commitment is real but nobody's money moves until the plan does.
+---
+
+## Contents
+
+- [Try it in two minutes](#try-it-in-two-minutes)
+- [What's inside](#whats-inside)
+- [How the money moves](#how-the-money-moves)
+- [Safety and quality](#safety-and-quality)
+- [Run it locally](#run-it-locally)
+- [Deploy on Render](#deploy-on-render)
+- [Tests](#tests)
+- [Project layout](#project-layout)
+
+---
+
+## Try it in two minutes
+
+Open the [live demo](https://sidequest-web-q5pq.onrender.com) and click **Take the 2-minute tour**. You get a private copy of a quest, and a bar at the bottom walks you through five steps. Each step switches to the right person for you, so you can play every side alone.
+
+| Step | You play | What happens on PayPal |
+|---|---|---|
+| 1. Hold your spot | Leo | Approve a $81.00 hold with PayPal's own button. Seat 5 fills and the quest runs. |
+| 2. It's on: lock and charge | Hon, the host | More people join, the share drops to $67.29, and every hold is captured at that split. |
+| 3. Someone drops out | Dev, then Hon | Dev tells the group chat he's sick. Claude asks the host, who approves: charge the standby, refund Dev. |
+| 4. Settle up from a receipt | Hon | Claude reads the gas receipt. Each person gets a PayPal invoice for their share, with the receipt linked. |
+| 5. The host gets paid | anyone | A PayPal payout to the host. In real use it waits 24 hours after the trip. |
+
+The sandbox buyer login is shown in step 1. The **money log** on the quest page lists every PayPal call with its ID.
+
+Then try:
+- **My money** as Hon: the host desk. Press **Nudge** on Leo, or **Edit with Claude** and **Nudge the oldest invoice**.
+- **Scout**, the assistant in the bottom-right corner: ask for "something under $90 this weekend" and it can hold your spot.
+
+![Guided tour](docs/screens/tour.png)
+
+---
+
+## What's inside
+
+### PayPal, end to end
 
 | PayPal capability | Where Sidequest uses it |
 |---|---|
-| Orders v2, `intent: AUTHORIZE` | Holding a spot. The hold is the price for the minimum group, the most anyone can pay. |
-| Capture authorization (partial, `final_capture`) | Locking a quest. Each hold is captured at the real split, always at or below the hold. |
-| Void authorization | Leaving before lock, quests that never tip, and standby holds after the trip. |
-| Reauthorize | Holds older than the 3 day honor period are reauthorized before capture. |
-| Refund capture (partial) | Dropout swaps after lock, and refunds when costs come in under. |
-| Payouts v1 | Paying the host automatically 24 hours after the trip, unless a member reports a problem. |
-| Invoicing, through the **PayPal Agent Toolkit** | Billing each person when costs come in over, with the receipts behind the charge linked on the invoice. |
-| PayPal Agent Toolkit, adapted for Claude | The quest agent can call `get_order_details` and `get_invoice`. |
-| Webhooks with signature verification | `CHECKOUT.ORDER.APPROVED` places holds for link-based approvals. Capture, void, refund and payout events confirm the money log. |
-| JS SDK Smart Buttons | PayPal, Venmo and cards, with `intent=authorize`. Pay Later is turned off because installments can't be held. |
+| Orders v2, `intent: AUTHORIZE` | Holding a spot at the price for the minimum group, the most anyone can pay |
+| Capture authorization (partial, `final_capture`) | Locking a quest. Each hold is captured at the real split, never above the hold |
+| Void authorization | Leaving before lock, quests that don't reach their minimum, unused standby holds |
+| Reauthorize | Holds older than the 3-day honor period are reauthorized before capture |
+| Refund capture | Dropout swaps after lock, and refunds when costs come in under |
+| Payouts v1 | Paying the host 24 hours after the trip, unless a member reports a problem |
+| Invoicing, through the **PayPal Agent Toolkit** | Billing each person when costs come in over, receipts linked on the invoice |
+| Invoice reminders | Friendly nudges from the host desk, sent by PayPal with the pay button |
+| Webhooks with signature verification | Confirming holds, captures, voids, refunds, payouts and paid invoices |
+| JS SDK Smart Buttons | PayPal, Venmo and cards. Pay Later is off because installments can't be held |
 
-And for agentic commerce: **Sidequest is an MCP server.** Scout, the assistant in the corner of every page, runs on the same four MCP tools, so you can try it without installing anything. Claude, ChatGPT or any MCP client can find quests and start a hold. The person approves the hold on PayPal's own page, so an agent can commit you to a plan but can never spend without you.
+![Quest page](docs/screens/quest.png)
 
-## How it works
+### Claude, with guardrails
+
+- **Quest builder.** One sentence becomes a full quest: date, stops, meet point and an honest cost split.
+- **Quest agent.** Runs the group chat, answers questions, and handles dropouts and cost changes. It can read the quest, act for the person speaking, and propose money moves. It can't move money. The host sees exactly what will run on PayPal and approves it.
+- **Receipt reader.** Claude reads each receipt photo (merchant, date, total, and which cost it covers). The engine then runs checks that don't depend on the model: duplicates are rejected, dates outside the trip and totals far above the estimate are flagged, and anything that isn't a receipt is rejected.
+- **PayPal Agent Toolkit, adapted for Claude.** The toolkit ships adapters for OpenAI Agents, LangChain and CrewAI. Sidequest uses its shared layer with a Claude adapter, for invoices and read-only order lookups.
+
+![Claude proposes a swap, the host approves](docs/screens/agent-proposal.png)
+
+### Host desk (AG Studio)
+
+Hosts get a dashboard on **My money**, built with [AG Studio](https://www.ag-grid.com/studio/) and themed to match the app.
+
+- Net charged, paid out, still owed and collected by invoice, charges by quest, invoices by status, a weekly trend and a grid of every PayPal call. Everything cross-filters.
+- **Who still owes**, a custom widget: open PayPal invoices ranked by amount, days open and nudges sent. **Nudge** opens a reminder the host can edit before PayPal sends it. At most 3 per person, 12 hours apart.
+- **Edit with Claude**: AG Studio's five built-in agents run on Claude through the API (`POST /studio/llm`), so the key never reaches the browser. One extra tool, `draft_payment_reminder`, lets Claude write a nudge. Only the host can send it.
+- On a phone, the desk becomes a simple "Who still owes" list.
+
+![Host desk](docs/screens/host-desk.png)
+
+### Scout and MCP
+
+**Sidequest is an MCP server** at `/mcp/` with four tools: `list_quests`, `get_quest`, `hold_spot` and `check_my_spot`. Claude, ChatGPT or any MCP client can find a quest and start a hold. The person still approves the hold on PayPal's own page, so an agent can commit you to a plan but can never spend without you.
+
+**Scout**, the little assistant in the corner of every page, uses the same four tools, so you can try agentic commerce without installing anything. The **For AI agents** page (in the footer) has setup steps for Claude, Claude Desktop and ChatGPT.
+
+![Scout](docs/screens/scout.png)
+
+### Render
+
+One Blueprint deploys the whole stack, including a **Cron Job** that runs the money clock and a **Workflow** that sends settle-up invoices in parallel. See [Deploy on Render](#deploy-on-render).
+
+---
+
+## How the money moves
 
 ```mermaid
 sequenceDiagram
@@ -44,52 +121,37 @@ sequenceDiagram
   S->>P: Create order (AUTHORIZE, max price)
   M->>P: Approve
   S->>P: Authorize order
-  Note over S: Minimum reached, quest is on
-  H->>S: Lock (or deadline passes)
-  S->>P: Capture each authorization at the final split
-  Note over S: Dropout after lock
-  S-->>H: Agent proposes a swap
+  Note over S: Minimum reached, the quest is on
+  H->>S: Lock (or the deadline passes)
+  S->>P: Capture each hold at the final split
+  Note over S: Someone drops out after lock
+  S-->>H: Claude proposes a swap
   H->>S: Approve
-  S->>P: Capture standby hold, refund the dropout
-  H->>S: Trip done
-  S->>P: Payout to host
+  S->>P: Capture the standby hold, refund the dropout
+  Note over S: After the trip
+  S->>P: Invoices from receipts (Agent Toolkit, Render Workflow)
+  S->>P: Payout to the host after 24 hours
 ```
 
-### The host is paid by escrow, not by trust
+**The host is paid by escrow, not by trust.** Members' money is captured when the quest locks, so nobody can skip paying. The host can't take the money early either: the payout releases on its own 24 hours after the trip, and any member who paid can report a problem to pause it.
 
-Members' money is captured when the quest locks, so nobody can refuse to pay. The opposite risk is the host taking the money and not running the trip, so:
+---
 
-- The payout releases on its own **24 hours after the trip ends** (`PAYOUT_HOLD_HOURS`). The host can't pull it early.
-- Any member who paid can **report a problem**, by button or by telling the agent. That pauses the payout until the host resolves it.
-- A payout also waits while any money change is pending the host's approval.
+## Safety and quality
 
-### Settle up runs on receipts
-
-After the trip, the host adds receipt photos. Claude reads each one (merchant, date, total, and which shared cost it pays for) with a forced tool call, and the engine runs checks that don't depend on the model: duplicate images are rejected, dates outside the trip and totals far above the estimate are flagged, and anything that isn't a receipt is rejected. The settle-up is computed from the receipts: lines with receipts cost what the receipts add up to, and the rest keep their estimate. Members see the receipts on the approval card, and each PayPal invoice includes the receipt details and a link to the image.
-
-### The agent's guardrails
-
-The agent never moves money on its own. It has five tools of its own plus two read-only PayPal Agent Toolkit tools:
-
-- `get_quest_state` and `price_for` read the quest.
-- `leave_quest` acts only for the person speaking. Before lock it voids their own hold. After lock it becomes a proposal.
-- `propose_money_actions` creates a proposal (void, promote, refund or invoice) that only the host can approve.
-- `add_stop_note` saves answers to the plan.
-
-Every proposal is re-validated by the engine at approval time. A capture can never exceed the authorization, and a refund can never exceed what was captured. Member messages are treated as data, so one person can't talk the agent into moving someone else's money.
-
-## Quality
-
+- **Money rules live in one engine.** A capture can never exceed the hold, and a refund can never exceed the capture. Every proposal is re-checked at approval time.
 - **Every money move is serialized per quest.** Two people can't take the same seat, and a webhook and a click can't authorize the same order twice.
 - **Each approval runs once.** Proposals are claimed atomically, and duplicates collapse into one card.
-- **No money for closed quests.** If a quest closes while someone is on PayPal's approval page, their order is never authorized.
-- **Holds fit PayPal's window.** Join deadlines must be within 28 days, because authorizations last 29. Holds older than 3 days are reauthorized before capture.
-- **Agent limits.** Chat is rate limited. Only the host and people on a quest can trigger money proposals.
-- **CI** runs 31 backend tests (money lifecycle, races, closed quests, migrations, webhooks, MCP, and the Claude tool loop through the real SDK) plus frontend type checks, lint and a production build.
+- **No double billing.** Invoice numbers are deterministic, so a retried send finds the invoice it already sent instead of billing again.
+- **Holds fit PayPal's window.** Join deadlines must be within 28 days, because authorizations last 29.
+- **Prompt injection resistant.** Member messages are treated as data, so one person can't talk Claude into moving someone else's money.
+- **CI** runs 31 backend tests (money lifecycle, races, webhooks, MCP, the Claude tool loop through the real SDK, the Render Workflow tasks) plus type checks, lint and a production build.
 
-## Run it locally (no keys needed)
+---
 
-Requires Python 3.11+ and Node 18+.
+## Run it locally
+
+No keys needed. Without them, PayPal runs in mock mode and Claude runs a rule-based offline mode, so everything works end to end. Requires Python 3.11+ and Node 18+.
 
 ```bash
 # Backend
@@ -98,7 +160,7 @@ python3 -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
 pip install --no-deps paypal-agent-toolkit==1.11.0
 cp .env.example .env
-uvicorn main:app --reload
+python -m uvicorn main:app --reload
 
 # Frontend, in a second terminal
 cd frontend
@@ -107,124 +169,90 @@ npm install
 npm run dev
 ```
 
-Open http://localhost:3000. Without keys, PayPal runs in mock mode and the agent runs offline, so everything works end to end. Five demo quests are seeded, each at a different stage.
+Open http://localhost:3000. Demo quests are seeded at every stage, plus two past trips with open invoices for the host desk.
 
-## Turn on the PayPal sandbox
+### Turn on the PayPal sandbox
 
-1. At [developer.paypal.com](https://developer.paypal.com), open **Apps & Credentials**, choose **Sandbox**, and create an app. Copy the client ID and secret into `backend/.env` as `PAYPAL_CLIENT_ID` and `PAYPAL_CLIENT_SECRET`.
-2. Under **Sandbox accounts**, make sure you have a business account (it receives holds and sends payouts) and one or more personal accounts (to approve holds).
+1. At [developer.paypal.com](https://developer.paypal.com), open **Apps & Credentials > Sandbox** and create an app. Put the client ID and secret in `backend/.env` as `PAYPAL_CLIENT_ID` and `PAYPAL_CLIENT_SECRET`.
+2. Check you have a sandbox business account (receives holds, sends payouts) and a personal account (approves holds).
 3. Run the check script. It walks through authorize, partial capture, refund, void, payout and an Agent Toolkit invoice against the real sandbox:
    ```bash
    cd backend && python scripts/check_sandbox.py
    ```
-4. Restart the backend. The header badge now says **PayPal sandbox**, and the hold button is PayPal's own Smart Button.
-5. Optional: give the demo crowd real sandbox holds. Generate a test card under **Testing tools > Card generator** and set `DEMO_CARD_NUMBER`. Without it, demo crowd joins are simulated and labeled as simulated in the money log.
+4. Restart the backend. The header badge now says **PayPal sandbox**.
+5. For judges, set `DEMO_BUYER_EMAIL` and `DEMO_BUYER_PASSWORD` to a sandbox personal account. The tour shows them in step 1. They only appear in sandbox mode with `DEMO_MODE=1`.
 
-### Webhooks
+**Webhooks.** Point a sandbox webhook at `https://<your-api>/webhooks/paypal` with all events, or at least `CHECKOUT.ORDER.APPROVED`, `PAYMENT.AUTHORIZATION.*`, `PAYMENT.CAPTURE.*`, `PAYMENT.PAYOUTS*`, `INVOICING.INVOICE.PAID` and `INVOICING.INVOICE.CANCELLED`. Set its ID as `PAYPAL_WEBHOOK_ID`. Each event is verified with PayPal's `verify-webhook-signature` endpoint and stored once.
 
-Add a webhook in your sandbox app pointing to `https://<your-api>/webhooks/paypal` with these events:
+### Turn on Claude
 
-`CHECKOUT.ORDER.APPROVED`, `PAYMENT.AUTHORIZATION.CREATED`, `PAYMENT.AUTHORIZATION.VOIDED`, `PAYMENT.CAPTURE.COMPLETED`, `PAYMENT.CAPTURE.DENIED`, `PAYMENT.CAPTURE.REFUNDED`, `PAYMENT.PAYOUTSBATCH.SUCCESS`, `PAYMENT.PAYOUTS-ITEM.SUCCEEDED`
+Set `ANTHROPIC_API_KEY` in `backend/.env`. `ANTHROPIC_MODEL` defaults to `claude-sonnet-5-5`.
 
-Set the webhook's ID as `PAYPAL_WEBHOOK_ID`. Each event is verified with PayPal's `verify-webhook-signature` endpoint and stored once.
+### AG Studio licence
 
-### Judge access
+Without a key, AG Studio runs as a trial and shows a watermark on non-localhost hosts. Set `NEXT_PUBLIC_AG_STUDIO_LICENSE` on the frontend to remove it.
 
-Set `DEMO_BUYER_EMAIL` and `DEMO_BUYER_PASSWORD` to a sandbox personal account. The guided tour shows them in step 1, so judges can approve holds. They only appear in sandbox mode with `DEMO_MODE=1`, and they are sandbox test credentials, never live ones.
-
-## Turn on Claude
-
-Set `ANTHROPIC_API_KEY` in `backend/.env`. The quest builder then uses a forced `draft_quest` tool call, and the quest agent runs a full tool-use loop. `ANTHROPIC_MODEL` defaults to `claude-sonnet-5-5`.
-
-## Connect an AI assistant (MCP)
-
-The MCP endpoint is `https://<your-api>/mcp/` (streamable HTTP). Tools: `list_quests`, `get_quest`, `hold_spot`, `check_my_spot`. The **For AI agents** page in the app has copyable config for Claude Desktop and custom connectors.
-
-## Host desk (AG Studio + Claude)
-
-Hosts see a host desk on **My money**, built with [AG Studio](https://www.ag-grid.com/studio/), AG Grid's embedded analytics component, themed to match the app.
-
-- **Three related tables** from `GET /me/books`: quests, every PayPal event, and invoices. Hosts see everyone on their quests. Members see only their own rows.
-- **Pre-built dashboard:** net charged (with a weekly sparkline), paid out, still owed, collected by invoice, charges by quest, invoices by status, a weekly trend and a grid of every PayPal call. Click a quest button or a bar and everything cross-filters.
-- **Who still owes:** a custom AG Studio widget. One row per open PayPal invoice, ranked by amount, with days open and how many times the person was nudged. It queries Studio's data engine, so filters apply.
-- **Nudges, never automatic:** **Nudge** opens a short, friendly reminder for the host to edit. **Send through PayPal** sends it with the Invoicing reminder API (`/v2/invoicing/invoices/{id}/remind`, validated with the Agent Toolkit's parameter model). At most 3 per person, 12 hours apart.
-- **Claude inside the dashboard:** **Edit with Claude** opens AG Studio's Agent Framework. All five built-in agents (lead, planning, data, page, widget) run on Claude through `POST /studio/llm`, so the Anthropic key never reaches the browser. We added one tool, `draft_payment_reminder`. Claude can find the oldest invoice and write the nudge, but only the host can send it. Try "Spot anything odd" to have it build an anomaly widget.
-- **Payment status from PayPal:** `INVOICING.INVOICE.PAID` webhooks mark invoices paid, and **Check PayPal for payments** asks PayPal directly.
-
-Without a licence key AG Studio runs as a trial with a watermark on non-localhost hosts. Set `NEXT_PUBLIC_AG_STUDIO_LICENSE` on `sidequest-web` to remove it.
-
-Each quest page also has a money log built on AG Grid Community, with filters, search and CSV export.
+---
 
 ## Deploy on Render
 
-`render.yaml` is a [Render](https://render.com) Blueprint for the whole stack. In the Render dashboard choose **New > Blueprint** and point it at this repo. It creates:
+`render.yaml` is a [Render](https://render.com) Blueprint. In the dashboard choose **New > Blueprint** and point it at this repo.
 
 | Resource | Type | What it does |
-| --- | --- | --- |
-| `sidequest-api` | Web service (Python) | FastAPI, the quest engine, PayPal, Claude, and the MCP server at `/mcp/` |
+|---|---|---|
+| `sidequest-api` | Web service (Python) | FastAPI, the quest engine, PayPal, Claude and the MCP server |
 | `sidequest-web` | Web service (Node) | The Next.js app |
-| `sidequest-db` | Render Postgres | All data. `DATABASE_URL` is wired in automatically. Tables are created on first start |
-| `sidequest-clock` | Cron Job, every 30 min | Runs `scripts/tick.py`: starts or cancels quests at their deadline, locks fares, releases escrowed host payouts |
-| `sidequest-settle` | Workflow | Settle up: `settle_up` fans out one `send_invoice` task per person, each on its own instance with retries |
+| `sidequest-db` | Render Postgres | All data. Tables are created on first start |
+| `sidequest-clock` | Cron Job, every 30 min | Starts or cancels quests at their deadline, locks fares, releases host payouts, even when nobody has the site open |
+| `sidequest-settle` | Workflow | Settle up: one `send_invoice` task per person, each on its own instance with retries |
 
-**Why a Workflow for settle up.** Sending seven PayPal invoices is seven create-and-send round trips that can each fail on their own. On Render Workflows each one is a separate task run with automatic retries, and one failure doesn't stop the rest. Retries can't double-bill: every invoice gets a deterministic number (`SQ-<quest>-<member>-<cents>`), PayPal rejects a duplicate number, and the task then looks up the invoice it already sent. The tasks never touch the database. The API starts the run, waits for the results and applies them under the quest lock. If the run can't start, the API sends the invoices itself. If it starts but is slow, the API never resends, because approving again is idempotent. The money log notes which run sent each invoice. Code: `backend/workflows.py`, `backend/app/render_workflows.py`.
+**Why a Workflow for settle up.** Seven invoices are seven PayPal round trips that can each fail on their own. On Render Workflows each is a separate task run with automatic retries, and one failure doesn't stop the rest. The tasks never touch the database: the API starts the run, waits for the results and applies them under the quest lock. If the run can't start, the API sends the invoices itself. The money log notes which run sent each invoice.
 
-Render asks for the values marked `sync: false`: PayPal sandbox keys, the Anthropic key, the sandbox buyer login for the judge panel, the public URLs, and a Render API key (`RENDER_API_KEY`, from Account Settings > API Keys) so the API can start workflow runs. Set `API_URL` on the cron job to the API's public URL. `CRON_SECRET` is generated once and shared between the API and the cron job.
+Render asks for the `sync: false` values: PayPal keys, the Anthropic key, the sandbox buyer login, the public URLs, and a `RENDER_API_KEY` (Account Settings > API Keys) so the API can start workflow runs. Set `API_URL` on the cron job to the API's public URL.
 
-The database uses the smallest paid plan because free Render Postgres expires after 30 days, which would fall inside judging. To use [Supabase](https://supabase.com) instead, replace the `fromDatabase` block with `sync: false` and paste its session pooler connection string.
+The database uses the smallest paid plan, because free Render Postgres expires after 30 days. Keep `DEMO_MODE=1` for judging.
 
-To deploy the frontend on Vercel instead, import the repo with root directory `frontend` and set `NEXT_PUBLIC_API_URL`. The backend's CORS rules already allow `sidequest*.vercel.app`.
-
-Keep `DEMO_MODE=1` for judging. It turns on one-click personas and the demo controls.
-
-## For judges: the two minute tour
-
-Click **Take the 2-minute tour** on the home page. You get a private copy of the hero quest, so your clicks never collide with another judge's, and a bar at the bottom walks you through five steps:
-
-1. **Hold your spot** as Leo with the real PayPal button. Seat 5 fills and the quest runs.
-2. **It's on: lock and charge.** More people join, the share drops from $81.00 to $67.29, and the host locks. PayPal captures every hold at the final split.
-3. **Someone drops out.** Dev tells the group chat he's sick. Claude can't move money, so it asks the host, who approves the swap: the standby is charged and Dev is refunded.
-4. **Settle up from a receipt.** Claude reads the gas receipt, and each person gets a PayPal invoice for their share with the receipt linked.
-5. **The host gets paid.** In real use this releases on its own 24 hours after the trip. The demo skips the wait.
-
-Each step switches to the right person for you. The PayPal sandbox buyer login is shown in step 1. The money log on the quest page lists every PayPal call with its ID.
-
-Then open **My money** as Hon for the host desk: press **Nudge** on Leo, or **Edit with Claude** and **Nudge the oldest invoice**. **For AI agents** is linked in the footer.
+---
 
 ## Tests
 
 ```bash
 cd backend
-python -m pytest tests/test_flow.py        # full money lifecycle, webhooks, MCP
-python -m pytest tests/test_qa.py          # races, closed quests, resets, limits, migrations
+python -m pytest tests/test_flow.py        # full money lifecycle, webhooks, MCP, settle up
+python -m pytest tests/test_qa.py          # races, closed quests, limits, host desk, receipts, workflows
 python -m pytest tests/test_agent_wire.py  # Claude tool loop through the real SDK, on a fake transport
+python -m pytest tests/test_workflows.py   # Render Workflow tasks: fan-out, failures, no double billing
 ```
 
-Run the two files separately. Each sets its own environment.
+Run each file on its own. Each sets up its own database.
+
+---
 
 ## Project layout
 
 ```
 backend/
-  main.py                 FastAPI app, scheduler, MCP mount
-  app/engine.py           Quest lifecycle. Every money move goes through here.
-  app/paypal/gateway.py   Orders, Payments, Payouts, Webhooks (sandbox and mock)
-  app/paypal/toolkit.py   PayPal Agent Toolkit tools, adapted for Claude
-  app/agent/builder.py    One sentence to a quest draft
-  app/agent/keeper.py     The quest agent and its guarded tools
-  app/mcp_server.py       Sidequest as an MCP server
-  app/pricing.py          The split
-  scripts/check_sandbox.py
-  app/books.py            Host desk data, invoice reminders, Claude proxy for AG Studio
-  scripts/tick.py         Render Cron Job entry point
-  workflows.py            Render Workflow: settle_up and send_invoice tasks
+  main.py                   FastAPI app, scheduler, MCP mount
+  workflows.py              Render Workflow: settle_up and send_invoice tasks
+  app/engine.py             Quest lifecycle. Every money move goes through here
+  app/api.py                REST API
+  app/books.py              Host desk data, invoice reminders, Claude proxy for AG Studio
+  app/paypal/gateway.py     Orders, Payments, Payouts, Webhooks (sandbox and mock)
+  app/paypal/toolkit.py     PayPal Agent Toolkit, adapted for Claude
+  app/agent/                Quest builder, quest agent, receipt reader, Scout
+  app/mcp_server.py         Sidequest as an MCP server
+  app/render_workflows.py   Starts and waits on workflow runs
+  scripts/                  check_sandbox.py, tick.py (Render Cron Job)
 frontend/
-  src/app/                Departures, invite page, quest page, builder, holds, books, agents
-  src/components/         Ticket, departure board, seat map, money route, agent panel, ledger grid
-  src/studio/             AG Studio host desk: data, dashboard state, Who still owes widget, Claude adapter
-render.yaml               Render Blueprint: API, web, Postgres, cron
+  src/app/                  Departures, invite page, quest page, builder, My money, For AI agents
+  src/components/           Ticket, departure board, seat map, money route, agent panel, tour bar, Scout
+  src/studio/               AG Studio host desk: data, dashboard, Who still owes widget, Claude adapter
+render.yaml                 Render Blueprint: API, web, Postgres, Cron Job, Workflow
+docs/                       Devpost write-up, demo script, screenshots
 ```
+
+---
 
 ## License
 
-MIT
+[MIT](LICENSE)
