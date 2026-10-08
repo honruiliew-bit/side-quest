@@ -113,6 +113,8 @@ def test_full_lifecycle(client):
     assert all(a["type"] == "invoice" for a in settle["actions"]) and len(settle["actions"]) == 7
     d = client.post(f"/proposals/{settle['id']}/decide", json={"approve": True}, headers=hon).json()
     assert sum(1 for e in d["ledger"] if e["kind"] == "invoice") == 7
+    dues = [x for x in client.get("/me/books", headers=hon).json()["dues"] if x["quest_id"] == qid]
+    assert len(dues) == 7 and all(x["status"] == "Open" and x["can_remind"] for x in dues)
 
     # The host can't take the money before the trip. It releases on its own after the dispute window.
     early = client.post(f"/quests/{qid}/complete", headers=hon)

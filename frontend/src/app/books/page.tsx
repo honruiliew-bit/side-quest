@@ -2,93 +2,97 @@
 
 import dynamic from "next/dynamic";
 import Link from "next/link";
-import { useEffect, useMemo, useState } from "react";
-import type { LedgerRow } from "@/components/LedgerGrid";
+import { useCallback, useEffect, useState } from "react";
 import { api } from "@/lib/api";
-import { money } from "@/lib/format";
 import { useSession } from "@/lib/session";
+import type { Books } from "@/studio/types";
 
-const LedgerGrid = dynamic(() => import("@/components/LedgerGrid").then((m) => m.LedgerGrid), {
+// AG Studio, AG Grid Enterprise and AG Charts load only on this page, in the browser.
+const HostDesk = dynamic(() => import("@/studio/HostDesk"), {
   ssr: false,
-  loading: () => <div className="h-[420px] border-2 border-ink bg-stock" aria-busy="true" />,
+  loading: () => <Loading />,
 });
 
-export default function Books() {
-  const { user, ready, config, toast } = useSession();
-  const [rows, setRows] = useState<LedgerRow[] | null>(null);
-  const [showTour, setShowTour] = useState(false);
+export default function BooksPage() {
+  const { user, ready, toast } = useSession();
+  const [books, setBooks] = useState<Books | null>(null);
+  const [mode, setMode] = useState<"view" | "edit">("view");
+  const [checking, setChecking] = useState(false);
+
+  const load = useCallback(() => {
+    api<Books>("/me/books").then(setBooks).catch((e) => toast(e.message, "error"));
+  }, [toast]);
 
   useEffect(() => {
     if (!ready || !user) return;
-    setRows(null);
-    api<LedgerRow[]>("/me/ledger").then(setRows).catch((e) => toast(e.message, "error"));
-  }, [ready, user, toast]);
+    setBooks(null);
+    load();
+  }, [ready, user, load]);
 
-  const visible = useMemo(() => (rows ?? []).filter((r) => showTour || !r.quest?.tour), [rows, showTour]);
-  const hasTour = (rows ?? []).some((r) => r.quest?.tour);
+  const checkPayPal = async () => {
+    setChecking(true);
+    try {
+      const r = await api<{ checked: number; changed: number }>("/me/books/refresh", { method: "POST" });
+      toast(r.changed ? `${r.changed} invoice${r.changed > 1 ? "s" : ""} paid since you last looked.` : `Checked ${r.checked} open invoice${r.checked === 1 ? "" : "s"} with PayPal. Nothing new.`, r.changed ? "money" : "info");
+      load();
+    } catch (e) {
+      toast(e instanceof Error ? e.message : "Couldn't reach PayPal.", "error");
+    } finally {
+      setChecking(false);
+    }
+  };
 
-  const sum = (k: string, pred: (r: LedgerRow) => boolean = () => true) =>
-    visible.filter((r) => r.kind === k && pred(r)).reduce((a, r) => a + r.cents, 0);
-  const charged = sum("charge");
-  const refunded = sum("refund");
-  const paidOut = sum("payout", (r) => r.quest?.role === "host");
-  const hosting = visible.some((r) => r.quest?.role === "host");
+  const empty = books && books.quests.length === 0;
 
   return (
     <>
       <section className="platform">
         <div className="tactile" aria-hidden="true" />
-        <div className="mx-auto flex max-w-page flex-wrap items-end justify-between gap-6 px-4 pb-12 pt-10 sm:px-10">
-          <div className="max-w-[560px]">
-            <h1 className="display text-[52px] sm:text-[68px]">Books</h1>
-            <p className="mt-3 text-[17px]">
-              Every PayPal hold, charge, refund, invoice and payout on your quests, with the PayPal ID that proves it.
-              {hosting ? " As a host you see every traveler on your quests." : ""}
+        <div className="mx-auto flex max-w-page flex-wrap items-end justify-between gap-6 px-4 pb-8 pt-8 sm:px-10">
+          <div className="max-w-[620px]">
+            <h1 className="display text-[48px] sm:text-[60px]">{books?.hosting ? "Host desk" : "Books"}</h1>
+            <p className="mt-2 text-[17px]">
+              Every PayPal hold, charge, refund, invoice and payout on your quests, and who still owes you.
+              {books?.hosting ? " Click a quest or a bar to filter everything. Ask Claude to build any view you need." : ""}
             </p>
           </div>
-          <div className="flex flex-wrap gap-4">
-            <Stat label="Charged" value={money(charged)} />
-            <Stat label="Refunded" value={money(refunded)} />
-            {hosting && <Stat label="Paid out to you" value={money(paidOut)} />}
-          </div>
+          {books && !empty && (
+            <div className="flex flex-wrap gap-3">
+              <button className="btn btn-ghost bg-stock" onClick={checkPayPal} disabled={checking}>
+                {checking ? "Checking PayPal..." : "Check PayPal for payments"}
+              </button>
+              <button className="btn btn-ink" onClick={() => setMode((m) => (m === "edit" ? "view" : "edit"))} aria-pressed={mode === "edit"}>
+                {mode === "edit" ? "Done editing" : "Edit with Claude"}
+              </button>
+            </div>
+          )}
         </div>
       </section>
-      <main className="mx-auto flex max-w-page flex-col gap-6 px-4 pt-12 sm:px-10">
-        {!user && <p className="text-[17px]">Pick who you are in the top right to see your books.</p>}
-        {user && rows === null && <div className="h-[420px] border-2 border-ink bg-stock" aria-busy="true" />}
-        {user && rows && rows.length === 0 && (
-          <div className="panel flex flex-wrap items-center justify-between gap-4 p-6">
-            <span className="text-[16px]">No PayPal activity yet. Hold a spot and it shows up here.</span>
-            <Link href="/" className="btn btn-ink">See departures</Link>
+      <main>
+        {!user && <p className="mx-auto max-w-page px-4 pt-10 text-[17px] sm:px-10">Pick who you are in the top right to see your books.</p>}
+        {user && !books && <Loading />}
+        {empty && (
+          <div className="mx-auto max-w-page px-4 pt-10 sm:px-10">
+            <div className="panel flex flex-wrap items-center justify-between gap-4 p-6">
+              <span className="text-[16px]">No PayPal activity yet. Hold a spot and it shows up here.</span>
+              <Link href="/" className="btn btn-ink">See departures</Link>
+            </div>
           </div>
         )}
-        {user && rows && rows.length > 0 && (
-          <>
-            {hasTour && (
-              <label className="flex items-center gap-2 text-[15px]">
-                <input type="checkbox" checked={showTour} onChange={(e) => setShowTour(e.target.checked)} />
-                Include my tour quest
-              </label>
-            )}
-            <LedgerGrid
-              rows={visible}
-              paypalMode={config?.paypal_mode ?? "mock"}
-              showQuest
-              pageSize={25}
-              fileName={`sidequest-books-${user.name.toLowerCase().replace(/\W+/g, "-")}`}
-            />
-          </>
+        {books && !empty && (
+          <div className="h-[calc(100vh-120px)] min-h-[760px] w-full border-y-2 border-ink">
+            <HostDesk books={books} mode={mode} onChanged={load} />
+          </div>
         )}
       </main>
     </>
   );
 }
 
-function Stat({ label, value }: { label: string; value: string }) {
+function Loading() {
   return (
-    <div className="ticket min-w-[170px] px-5 py-4">
-      <div className="label">{label}</div>
-      <div className="tab text-[36px] font-extrabold leading-none text-money" style={{ fontStretch: "62%" }}>{value}</div>
+    <div className="grid h-[calc(100vh-120px)] min-h-[760px] place-items-center border-y-2 border-ink bg-paper" aria-busy="true">
+      <span className="text-[15px] text-muted">Loading your books...</span>
     </div>
   );
 }

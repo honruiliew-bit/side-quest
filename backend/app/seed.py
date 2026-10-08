@@ -1,4 +1,5 @@
-"""Demo data. Five quests, each parked at a different stage of the lifecycle."""
+"""Demo data. Five live quests, each parked at a different stage of the lifecycle, plus two past
+trips Hon hosted, so the host desk has a real history: payouts, refunds and invoices still open."""
 
 from __future__ import annotations
 
@@ -11,7 +12,9 @@ from sqlalchemy.orm import Session
 from . import engine
 from .auth import ensure_personas
 from .db import Base, engine as db_engine
-from .models import Quest, User
+import secrets
+
+from .models import Invoice, LedgerEntry, Quest, User
 from .paypal.gateway import gateway_for
 
 TZ = ZoneInfo("America/New_York")
@@ -204,10 +207,97 @@ def seed(db: Session) -> None:
     ri.join_by = _at(last_sat - timedelta(days=2), 21)
     db.flush()
 
+    seed_history(db, p)
+
+
+def _past_trip(db: Session, host: User, members: list[User], *, days_ago: int, overage_each: int,
+               paid: set[str], reminded: dict[str, int] | None = None, **kw) -> Quest:
+    """A finished quest with a settle up already sent. Invoices are simulated and labelled as such."""
+    now = datetime.now(TZ)
+    q = _quest(db, host, starts_at=now + timedelta(days=1), ends_at=None, join_by=now + timedelta(hours=12), **kw)
+    for m in members:
+        _join(db, q, m)
+    db.refresh(q)
+    engine.lock(db, q, reason=f"{host.name} locked the quest.")
+    engine.complete(db, q)
+    day = now.date() - timedelta(days=days_ago)
+    q.starts_at, q.ends_at = _at(day, 7), _at(day, 20)
+    q.join_by = _at(day - timedelta(days=2), 21)
+    q.created_at = q.starts_at - timedelta(days=9)
+    db.flush()
+
+    reminded = reminded or {}
+    for m in [m for m in q.memberships if m.status == "charged" and m.user_id != host.id]:
+        ref = "SIM-INV2-" + secrets.token_hex(6).upper()
+        engine.log(db, q, "invoice", overage_each, membership=m, ref=ref, provider="sim",
+                   note=f"Invoice sent to {m.user.name}: {q.code} shared cost overage")
+        inv = Invoice(quest=q, user=m.user, membership_id=m.id, paypal_id=ref, cents=overage_each,
+                      item=f"{q.code} shared cost overage", provider="sim",
+                      reminders=reminded.get(m.user.persona or "", 0))
+        db.add(inv)
+        db.flush()
+        if m.user.persona in paid:
+            engine.mark_invoice(db, inv, "paid")
+            inv.paid_at = q.ends_at + timedelta(days=2)
+
+    # Put every money event at a believable time around the trip.
+    when = {"hold": -8, "reauthorize": -2, "charge": -1, "release": -1, "refund": 1, "payout": 1,
+            "invoice": 1, "invoice_paid": 3}
+    for i, e in enumerate(db.scalars(select(LedgerEntry).where(LedgerEntry.quest_id == q.id))):
+        e.created_at = q.starts_at + timedelta(days=when.get(e.kind, 0), minutes=7 * i)
+    for inv in db.scalars(select(Invoice).where(Invoice.quest_id == q.id)):
+        inv.created_at = q.ends_at + timedelta(days=1)
+        if inv.reminders:
+            inv.last_reminded_at = q.ends_at + timedelta(days=4)
+    db.flush()
+    return q
+
+
+def seed_history(db: Session, p: dict[str, User]) -> None:
+    _past_trip(
+        db, p["hon"], [p[w] for w in ("hon", "maya", "dev", "leo", "sam", "noor")],
+        days_ago=19, overage_each=1100, paid={"maya", "dev", "noor"},
+        line_code="MT", title="Montauk sunrise surf lesson", area="Montauk, New York",
+        summary="A van to Ditch Plains, a two-hour surf lesson at sunrise, lobster rolls after.",
+        from_label="Penn Station", to_label="Montauk, NY", meet_point="Penn Station, 7th Ave entrance",
+        min_people=5, max_people=6,
+        cost_lines=[
+            {"label": "Van rental", "cents": 24000, "split": "shared"},
+            {"label": "Gas and tolls", "cents": 6000, "split": "shared"},
+            {"label": "Surf lesson", "cents": 6500, "split": "each"},
+        ],
+        itinerary=[
+            {"time": "4:30 am", "title": "Van leaves Penn Station", "detail": "Coffee on board"},
+            {"time": "7:00 am", "title": "Surf lesson", "detail": "Boards and wetsuits included"},
+            {"time": "11:00 am", "title": "Lobster rolls", "detail": "Pay your own"},
+        ],
+    )
+    _past_trip(
+        db, p["hon"], [p[w] for w in ("hon", "priya", "jules", "theo", "ana")],
+        days_ago=40, overage_each=800, paid={"priya", "jules", "ana"}, reminded={"theo": 2},
+        line_code="CK", title="Catskills fire tower hike", area="Catskills, New York",
+        summary="A rental car to the Overlook Mountain trailhead, the fire tower, and pie in Woodstock.",
+        from_label="Midtown", to_label="Woodstock, NY", meet_point="Hertz on W 40th St",
+        min_people=4, max_people=5,
+        cost_lines=[
+            {"label": "Car rental", "cents": 14000, "split": "shared"},
+            {"label": "Parking and gas", "cents": 4000, "split": "shared"},
+        ],
+        itinerary=[
+            {"time": "7:00 am", "title": "Pick up the car", "detail": "Hertz on W 40th St"},
+            {"time": "10:00 am", "title": "Overlook Mountain", "detail": "5 miles round trip"},
+            {"time": "3:00 pm", "title": "Pie in Woodstock", "detail": "Pay your own"},
+        ],
+    )
+
 
 def seed_if_empty(db: Session) -> bool:
     if db.scalar(select(Quest.id).limit(1)):
-        ensure_personas(db)
+        p = ensure_personas(db)
+        # Databases seeded before the host desk existed get its history once.
+        if not db.scalar(select(Quest.id).where(Quest.line_code == "MT", Quest.tour.isnot(True)).limit(1)):
+            seed_history(db, p)
+            return True
         return False
     seed(db)
     return True

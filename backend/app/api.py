@@ -492,7 +492,9 @@ async def paypal_webhook(request: Request, db: Session = Depends(get_db)):
                         verified=verified, payload=event))
     db.commit()
     batch = (resource.get("batch_header") or {}).get("payout_batch_id") or resource.get("payout_batch_id")
-    quest_id = _quest_for_resource(db, resource.get("id")) or _quest_for_resource(db, batch)
+    invoice_id = (resource.get("invoice") or {}).get("id")  # invoicing events nest the invoice
+    quest_id = (_quest_for_resource(db, resource.get("id")) or _quest_for_resource(db, batch)
+                or _quest_for_resource(db, invoice_id))
     if not quest_id:
         return {"status": "unknown"}
     with engine.quest_lock(quest_id):

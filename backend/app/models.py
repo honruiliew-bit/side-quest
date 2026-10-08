@@ -226,6 +226,30 @@ class Receipt(Base):
     created_at: Mapped[datetime] = mapped_column(TZDateTime(), default=utcnow)
 
 
+class Invoice(Base):
+    """A PayPal invoice for someone's share of an over-budget cost. Tracked until it is paid."""
+
+    __tablename__ = "invoices"
+
+    id: Mapped[str] = mapped_column(String(40), primary_key=True, default=lambda: new_id("iv"))
+    quest_id: Mapped[str] = mapped_column(ForeignKey("quests.id"), index=True)
+    membership_id: Mapped[str | None] = mapped_column(ForeignKey("memberships.id"), nullable=True)
+    user_id: Mapped[str] = mapped_column(ForeignKey("users.id"), index=True)
+    paypal_id: Mapped[str] = mapped_column(String(80), unique=True, index=True)
+    cents: Mapped[int] = mapped_column(Integer)
+    item: Mapped[str] = mapped_column(String(200), default="")
+    provider: Mapped[str] = mapped_column(String(12), default="paypal")  # paypal | sim (seeded demo data)
+    # sent | paid | cancelled
+    status: Mapped[str] = mapped_column(String(12), default="sent")
+    reminders: Mapped[int] = mapped_column(Integer, default=0)
+    last_reminded_at: Mapped[datetime | None] = mapped_column(TZDateTime(), nullable=True)
+    paid_at: Mapped[datetime | None] = mapped_column(TZDateTime(), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(TZDateTime(), default=utcnow)
+
+    user: Mapped[User] = relationship(lazy="joined")
+    quest: Mapped["Quest"] = relationship()
+
+
 class WebhookEvent(Base):
     __tablename__ = "webhook_events"
 

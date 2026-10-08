@@ -80,7 +80,7 @@ Every proposal is re-validated by the engine at approval time. A capture can nev
 - **No money for closed quests.** If a quest closes while someone is on PayPal's approval page, their order is never authorized.
 - **Holds fit PayPal's window.** Join deadlines must be within 28 days, because authorizations last 29. Holds older than 3 days are reauthorized before capture.
 - **Agent limits.** Chat is rate limited. Only the host and people on a quest can trigger money proposals.
-- **CI** runs 24 backend tests (money lifecycle, races, closed quests, migrations, webhooks, MCP, and the Claude tool loop through the real SDK) plus frontend type checks, lint and a production build.
+- **CI** runs 26 backend tests (money lifecycle, races, closed quests, migrations, webhooks, MCP, and the Claude tool loop through the real SDK) plus frontend type checks, lint and a production build.
 
 ## Run it locally (no keys needed)
 
@@ -135,16 +135,20 @@ Set `ANTHROPIC_API_KEY` in `backend/.env`. The quest builder then uses a forced 
 
 The MCP endpoint is `https://<your-api>/mcp/` (streamable HTTP). Tools: `list_quests`, `get_quest`, `hold_spot`, `check_my_spot`. The **For AI agents** page in the app has copyable config for Claude Desktop and custom connectors.
 
-## Books: every PayPal event in one grid (AG Grid)
+## Host desk (AG Studio + Claude)
 
-The **Books** page and each quest's **Money log** are built on [AG Grid](https://www.ag-grid.com) Community. Every row is one PayPal call: the hold, capture, void, refund, invoice or payout, with its PayPal ID and whether a webhook confirmed it.
+The **Books** page is a host desk built with [AG Studio](https://www.ag-grid.com/studio/), AG Grid's embedded analytics component, themed to match the app.
 
-- Hosts see every traveler on their quests. Members see only their own rows.
-- Filter by event type, search by name, PayPal ID or note, and sort or filter any column.
-- The pinned bottom row shows net charged (captures minus refunds) for whatever is in view.
-- **Export CSV** gives timestamps and plain two-decimal amounts, ready for a spreadsheet or an expense claim.
+- **Three related tables** from `GET /me/books`: quests, every PayPal event, and invoices. Hosts see everyone on their quests. Members see only their own rows.
+- **Pre-built dashboard:** net charged (with a weekly sparkline), paid out, still owed, collected by invoice, charges by quest, invoices by status, a weekly trend and a grid of every PayPal call. Click a quest button or a bar and everything cross-filters.
+- **Who still owes:** a custom AG Studio widget. One row per open PayPal invoice, ranked by amount, with days open and how many times the person was nudged. It queries Studio's data engine, so filters apply.
+- **Nudges, never automatic:** **Nudge** opens a short, friendly reminder for the host to edit. **Send through PayPal** sends it with the Invoicing reminder API (`/v2/invoicing/invoices/{id}/remind`, validated with the Agent Toolkit's parameter model). At most 3 per person, 12 hours apart.
+- **Claude inside the dashboard:** **Edit with Claude** opens AG Studio's Agent Framework. All five built-in agents (lead, planning, data, page, widget) run on Claude through `POST /studio/llm`, so the Anthropic key never reaches the browser. We added one tool, `draft_payment_reminder`. Claude can find the oldest invoice and write the nudge, but only the host can send it. Try "Spot anything odd" to have it build an anomaly widget.
+- **Payment status from PayPal:** `INVOICING.INVOICE.PAID` webhooks mark invoices paid, and **Check PayPal for payments** asks PayPal directly.
 
-Data comes from `GET /me/ledger`.
+Without a licence key AG Studio runs as a trial with a watermark on non-localhost hosts. Set `NEXT_PUBLIC_AG_STUDIO_LICENSE` on `sidequest-web` to remove it.
+
+Each quest page also has a money log built on AG Grid Community, with filters, search and CSV export.
 
 ## Deploy on Render
 
@@ -208,10 +212,12 @@ backend/
   app/mcp_server.py       Sidequest as an MCP server
   app/pricing.py          The split
   scripts/check_sandbox.py
+  app/books.py            Host desk data, invoice reminders, Claude proxy for AG Studio
   scripts/tick.py         Render Cron Job entry point
 frontend/
   src/app/                Departures, invite page, quest page, builder, holds, books, agents
   src/components/         Ticket, departure board, seat map, money route, agent panel, ledger grid
+  src/studio/             AG Studio host desk: data, dashboard state, Who still owes widget, Claude adapter
 render.yaml               Render Blueprint: API, web, Postgres, cron
 ```
 

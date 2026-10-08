@@ -13,6 +13,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from app.api import router
+from app.books import router as books_router
 from app.config import settings
 from app.db import init_db, session_scope
 from app.engine import QuestError, tick
@@ -80,4 +81,5 @@ async def paypal_error(_: Request, exc: PayPalError):
 
 
 app.include_router(router)
+app.include_router(books_router)
 app.mount("/mcp", mcp_app)

@@ -145,3 +145,24 @@ def create_and_send_invoice(*, email: str, name: str, cents: int, item: str, not
         raise RuntimeError(f"PayPal did not return an invoice id: {created}")
     sent = run("send_invoice", {"invoice_id": invoice_id, "send_to_recipient": True})
     return {"invoice_id": invoice_id, "status": sent.get("status", "SENT"), "link": sent.get("href")}
+
+
+def send_reminder(*, invoice_id: str, subject: str, note: str) -> dict:
+    """Nudge someone about an unpaid invoice. Validated with the toolkit's own parameter model.
+
+    The toolkit handler posts every optional field, including nulls, so the request body is
+    built here with only the fields we set."""
+    from paypal_agent_toolkit.shared.invoices.parameters import SendInvoiceReminderParameters
+
+    clean = SendInvoiceReminderParameters(invoice_id=invoice_id, subject=subject[:200], note=note[:2000])
+    if paypal_mode() == "mock":
+        return {"invoice_id": invoice_id, "status": "REMINDED", "mock": True}
+    body = clean.model_dump(exclude_none=True, exclude={"invoice_id"})
+    response = _real_client().post(uri=f"/v2/invoicing/invoices/{invoice_id}/remind", payload=body)
+    return {"invoice_id": invoice_id, "status": "REMINDED", "response": response or None}
+
+
+def invoice_status(invoice_id: str) -> str:
+    """PayPal's status for an invoice: SENT, PAID, MARKED_AS_PAID, CANCELLED, ..."""
+    out = run("get_invoice", {"invoice_id": invoice_id})
+    return str(out.get("status") or "").upper()

@@ -209,3 +209,57 @@ def test_books_show_hosts_everything_and_members_only_their_own(client):
     assert dev, "dev joined seeded quests, so he has entries"
     assert all(r["user"]["id"] == dev_id for r in dev if r["quest"]["role"] == "member")
     assert client.get("/me/ledger").status_code == 401
+
+
+def test_host_desk_tracks_who_still_owes(client):
+    hon = login(client, "hon")
+    books = client.get("/me/books", headers=hon).json()
+    assert books["hosting"] is True
+    titles = {q["title"] for q in books["quests"]}
+    assert {"Montauk sunrise surf lesson", "Catskills fire tower hike"} <= titles
+    open_dues = [d for d in books["dues"] if d["status"] == "Open"]
+    assert {d["person"] for d in open_dues} == {"Leo", "Sam", "Theo"}
+    assert all(d["source"] == "Simulated" for d in books["dues"])
+    assert any(r["event"] == "Invoice paid" for r in books["ledger"])
+
+    # Members only see their own invoices.
+    leo = client.get("/me/books", headers=login(client, "leo")).json()
+    assert {d["person"] for d in leo["dues"]} == {"Leo"} and leo["hosting"] is False
+
+    leo_due = next(d for d in open_dues if d["person"] == "Leo")
+    note = {"subject": "Montauk gas", "note": "Hey Leo, just a heads-up on the $11 for gas."}
+    assert client.post(f"/invoices/{leo_due['id']}/remind", json=note, headers=login(client, "leo")).status_code == 403
+    r = client.post(f"/invoices/{leo_due['id']}/remind", json=note, headers=hon)
+    assert r.status_code == 200 and r.json()["reminders"] == 1
+    again = client.post(f"/invoices/{leo_due['id']}/remind", json=note, headers=hon)
+    assert again.status_code == 400 and "12 hours" in again.json()["detail"]
+
+    theo_due = next(d for d in open_dues if d["person"] == "Theo")
+    assert theo_due["reminders"] == 2 and theo_due["can_remind"] is True
+
+
+def test_invoice_paid_webhook_and_studio_proxy(client):
+    from app.db import session_scope
+    from app.models import Invoice, Quest
+
+    hon = login(client, "hon")
+    with session_scope() as db:
+        q = db.query(Quest).filter(Quest.line_code == "MT").first()
+        sam = next(m for m in q.memberships if m.user.persona == "sam")
+        inv = Invoice(quest_id=q.id, user_id=sam.user_id, membership_id=sam.id, paypal_id="INV2-TEST-PAID-0001",
+                      cents=1100, item="test")
+        db.add(inv)
+        from app import engine
+        engine.log(db, q, "invoice", 1100, membership=sam, ref=inv.paypal_id, provider="toolkit")
+    event = {"id": "WH-INV-1", "event_type": "INVOICING.INVOICE.PAID",
+             "resource": {"invoice": {"id": "INV2-TEST-PAID-0001", "status": "PAID"}}}
+    assert client.post("/webhooks/paypal", json=event).json()["status"] == "paid"
+    assert client.post("/webhooks/paypal", json=event).json()["status"] == "duplicate"
+    books = client.get("/me/books", headers=hon).json()
+    paid = [r for r in books["ledger"] if r["paypal_id"] == "INV2-TEST-PAID-0001" and r["event"] == "Invoice paid"]
+    assert len(paid) == 1 and paid[0]["confirmed"] == "Yes"
+
+    # With no Anthropic key the proxy answers in plain words instead of failing.
+    r = client.post("/studio/llm", headers=hon, json={"messages": [{"role": "user", "content": "hi"}]})
+    assert r.status_code == 200 and "off" in r.json()["content"][0]["text"]
+    assert client.post("/studio/llm", json={"messages": [{"role": "user", "content": "hi"}]}).status_code == 401

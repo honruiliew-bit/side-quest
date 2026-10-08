@@ -31,6 +31,7 @@ export const EVENT: Record<LedgerKind, string> = {
   refund: "Refunded",
   payout: "Paid out to host",
   invoice: "Invoice sent",
+  invoice_paid: "Invoice paid",
   reauthorize: "Hold renewed",
   decline: "Declined",
 };
@@ -42,6 +43,7 @@ export const API: Record<LedgerKind, string> = {
   refund: "Refund capture",
   payout: "Payouts v1",
   invoice: "Agent Toolkit invoice",
+  invoice_paid: "Invoicing",
   reauthorize: "Reauthorize",
   decline: "PayPal error",
 };
@@ -52,7 +54,7 @@ const FILTERS: { id: string; label: string; kinds: LedgerKind[] | null }[] = [
   { id: "charges", label: "Charges", kinds: ["charge"] },
   { id: "refunds", label: "Refunds", kinds: ["refund"] },
   { id: "payouts", label: "Payouts", kinds: ["payout"] },
-  { id: "invoices", label: "Invoices", kinds: ["invoice"] },
+  { id: "invoices", label: "Invoices", kinds: ["invoice", "invoice_paid"] },
 ];
 
 // The ticket-stock look: ink frame, paper header, blue only for money.
@@ -243,7 +245,7 @@ export function LedgerGrid({
     api.forEachNodeAfterFilter((n: IRowNode<Row>) => {
       if (!n.data) return;
       count += 1;
-      if (n.data.kind === "charge") net += n.data.cents;
+      if (n.data.kind === "charge" || n.data.kind === "invoice_paid") net += n.data.cents;
       if (n.data.kind === "refund") net -= n.data.cents;
     });
     setShown(count);

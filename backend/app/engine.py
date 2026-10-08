@@ -27,7 +27,7 @@ from sqlalchemy import func, select, update
 from sqlalchemy.orm import Session
 
 from .config import settings
-from .models import LedgerEntry, Membership, Message, Proposal, Quest, Receipt, User, aware, utcnow
+from .models import Invoice, LedgerEntry, Membership, Message, Proposal, Quest, Receipt, User, aware, utcnow
 from .paypal.gateway import PayPalError, gateway_for, paypal_mode
 from .paypal import toolkit
 from .pricing import fmt, hold_cents, price_cents
@@ -625,6 +625,8 @@ def decide_proposal(db: Session, p: Proposal, approve: bool) -> Proposal:
                     raise QuestError(f"PayPal didn't send {m.user.name}'s invoice: {out}")
                 log(db, quest, "invoice", a["cents"], membership=m, ref=out["invoice_id"],
                     provider="toolkit", note=f"Invoice sent to {m.user.name}: {a['item']}")
+                db.add(Invoice(quest_id=quest.id, membership_id=m.id, user_id=m.user_id,
+                               paypal_id=out["invoice_id"], cents=a["cents"], item=a["item"][:200]))
             results.append({"type": a["type"], "name": a["name"], "ok": True})
     except (QuestError, PayPalError, RuntimeError) as exc:
         p.status = "failed"
@@ -927,6 +929,13 @@ def handle_webhook(db: Session, event: dict) -> str:
             say(db, m.quest, f"PayPal reversed {m.user.name}'s charge.", meta={"event": "declined"})
             return "failed"
         return "unknown"
+    inv_id = (res.get("invoice") or {}).get("id") or rid
+    if kind in {"INVOICING.INVOICE.PAID", "INVOICING.INVOICE.CANCELLED"} and inv_id:
+        inv = db.scalar(select(Invoice).where(Invoice.paypal_id == inv_id))
+        if not inv:
+            return "unknown"
+        mark_invoice(db, inv, "paid" if kind.endswith("PAID") else "cancelled", confirmed=True)
+        return inv.status
     if kind.startswith("PAYMENT.PAYOUTS"):
         batch = (res.get("batch_header") or {}).get("payout_batch_id") or res.get("payout_batch_id")
         if batch:
@@ -941,3 +950,77 @@ def handle_webhook(db: Session, event: dict) -> str:
 def next_number(db: Session) -> int:
     current = db.scalar(select(func.max(Quest.number)))
     return (current or 416) + 1
+
+
+# --- Invoices: who still owes ----------------------------------------------------------
+
+REMINDER_GAP = timedelta(hours=12)
+MAX_REMINDERS = 3
+
+
+def mark_invoice(db: Session, inv: Invoice, status: str, *, confirmed: bool = False) -> None:
+    """Record PayPal's answer for an invoice. Paying it is logged once, with the invoice id as proof."""
+    if inv.status == status:
+        return
+    inv.status = status
+    quest = inv.quest
+    if status == "paid":
+        inv.paid_at = utcnow()
+        entry = log(db, quest, "invoice_paid", inv.cents, user=inv.user, ref=inv.paypal_id,
+                    provider="sim" if inv.provider == "sim" else "toolkit", note=f"{inv.user.name} paid their invoice")
+        entry.confirmed = confirmed
+        say(db, quest, f"{inv.user.name} paid their {fmt(inv.cents)} invoice on PayPal.", meta={"event": "invoice_paid"})
+    elif status == "cancelled":
+        say(db, quest, f"{inv.user.name}'s invoice was cancelled on PayPal.", meta={"event": "invoice_cancelled"})
+
+
+def refresh_invoices(db: Session, invoices: list[Invoice]) -> int:
+    """Ask PayPal for the latest status of open invoices, in parallel. Returns how many changed."""
+    from concurrent.futures import ThreadPoolExecutor
+
+    open_ones = [i for i in invoices if i.status == "sent" and i.provider != "sim"][:25]
+    if not open_ones:
+        return 0
+
+    def status_of(inv: Invoice):
+        try:
+            return toolkit.invoice_status(inv.paypal_id)
+        except Exception:  # one bad lookup should not hide the rest
+            return ""
+
+    with ThreadPoolExecutor(max_workers=min(6, len(open_ones))) as pool:
+        statuses = list(pool.map(status_of, open_ones))
+    changed = 0
+    for inv, st in zip(open_ones, statuses):
+        if st in {"PAID", "MARKED_AS_PAID"}:
+            mark_invoice(db, inv, "paid")
+            changed += 1
+        elif st in {"CANCELLED", "REFUNDED", "MARKED_AS_REFUNDED"}:
+            mark_invoice(db, inv, "cancelled")
+            changed += 1
+    return changed
+
+
+def remind_invoice(db: Session, inv: Invoice, by: User, subject: str, note: str) -> Invoice:
+    """The host sends a nudge through PayPal. Claude can draft it; only the host can send it."""
+    quest = inv.quest
+    if by.id != quest.host_id:
+        raise QuestError("Only the host can send reminders.", 403)
+    if inv.status != "sent":
+        raise QuestError(f"{inv.user.name}'s invoice is already {inv.status}.")
+    if inv.reminders >= MAX_REMINDERS:
+        raise QuestError(f"{inv.user.name} already has {MAX_REMINDERS} reminders. Talk to them directly.")
+    if inv.last_reminded_at and utcnow() - aware(inv.last_reminded_at) < REMINDER_GAP:
+        raise QuestError(f"{inv.user.name} was reminded less than 12 hours ago.")
+    note = (note or "").strip()
+    if not note:
+        raise QuestError("Write a short note for the reminder.")
+    if inv.provider != "sim":  # seeded demo invoices were never sent to PayPal
+        toolkit.send_reminder(invoice_id=inv.paypal_id, subject=(subject or f"Reminder: {quest.title}").strip(),
+                              note=note)
+    inv.reminders += 1
+    inv.last_reminded_at = utcnow()
+    say(db, quest, f"{by.name} sent {inv.user.name} a PayPal reminder for {fmt(inv.cents)}.",
+        meta={"event": "invoice_reminder"})
+    db.flush()
+    return inv

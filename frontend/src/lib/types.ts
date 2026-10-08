@@ -58,7 +58,7 @@ export type QuestCard = {
 export type CostLine = { label: string; cents: number; split: "shared" | "each" };
 export type Stop = { time: string; title: string; detail: string; note?: string | null };
 
-export type LedgerKind = "hold" | "release" | "charge" | "refund" | "payout" | "invoice" | "reauthorize" | "decline";
+export type LedgerKind = "hold" | "release" | "charge" | "refund" | "payout" | "invoice" | "invoice_paid" | "reauthorize" | "decline";
 
 export type LedgerEntry = {
   id: string;
