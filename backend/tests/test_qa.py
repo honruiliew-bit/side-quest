@@ -263,3 +263,48 @@ def test_invoice_paid_webhook_and_studio_proxy(client):
     r = client.post("/studio/llm", headers=hon, json={"messages": [{"role": "user", "content": "hi"}]})
     assert r.status_code == 200 and "off" in r.json()["content"][0]["text"]
     assert client.post("/studio/llm", json={"messages": [{"role": "user", "content": "hi"}]}).status_code == 401
+
+
+def test_settle_up_runs_on_render_workflows_and_falls_back_safely(client, monkeypatch):
+    from app import render_workflows
+
+    calls = []
+
+    def fake_settle_up(jobs):
+        calls.append(jobs)
+        # Every job carries a deterministic invoice number, so retries can't double-bill.
+        assert all(j["number"].startswith("SQ-") and len(j["number"]) <= 25 for j in jobs)
+        return [{"key": j["key"], "invoice_id": f"INV2-WF-{i}", "status": "SENT"} for i, j in enumerate(jobs)], "trn-abc123"
+
+    monkeypatch.setattr(render_workflows, "enabled", lambda: True)
+    monkeypatch.setattr(render_workflows, "settle_up", fake_settle_up)
+    qid, hon = _locked_tour(client)
+    d = client.post(f"/quests/{qid}/settle", json={"actual_shared_cents": 30000}, headers=hon).json()
+    p = [x for x in d["proposals"] if x["status"] == "pending"][0]
+    d = client.post(f"/proposals/{p['id']}/decide", json={"approve": True}, headers=hon).json()
+    notes = [e["note"] for e in d["ledger"] if e["kind"] == "invoice"]
+    assert calls and notes and all("Render Workflows run trn-abc123" in n for n in notes)
+    assert any("Render Workflows" in m["body"] for m in d["messages"])
+
+    # If the workflow can't start, invoices still go out from the API.
+    def not_started(jobs):
+        raise render_workflows.NotStarted("bad key")
+
+    monkeypatch.setattr(render_workflows, "settle_up", not_started)
+    qid, hon = _locked_tour(client)
+    d = client.post(f"/quests/{qid}/settle", json={"actual_shared_cents": 30000}, headers=hon).json()
+    p = [x for x in d["proposals"] if x["status"] == "pending"][0]
+    d = client.post(f"/proposals/{p['id']}/decide", json={"approve": True}, headers=hon).json()
+    assert all("Sent from the API" in e["note"] for e in d["ledger"] if e["kind"] == "invoice")
+
+    # If it started but is slow, never resend: the proposal stops and says why.
+    def still_running(jobs):
+        raise render_workflows.StillRunning("trn-slow")
+
+    monkeypatch.setattr(render_workflows, "settle_up", still_running)
+    qid, hon = _locked_tour(client)
+    d = client.post(f"/quests/{qid}/settle", json={"actual_shared_cents": 30000}, headers=hon).json()
+    p = [x for x in d["proposals"] if x["status"] == "pending"][0]
+    r = client.post(f"/proposals/{p['id']}/decide", json={"approve": True}, headers=hon)
+    assert r.status_code == 400 and "still sending" in r.json()["detail"]
+    assert not [e for e in client.get(f"/quests/{qid}", headers=hon).json()["ledger"] if e["kind"] == "invoice"]

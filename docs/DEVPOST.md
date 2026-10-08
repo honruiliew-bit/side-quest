@@ -32,7 +32,7 @@ Sidequest adds a small fee to each share, collected only when a quest runs (`PLA
 - **PayPal Agent Toolkit:** It ships adapters for OpenAI Agents, LangChain and CrewAI. We wrote a Claude adapter over its shared layer, so the agent uses the toolkit's own tool definitions, parameter models and handlers for orders and invoicing.
 - **AI:** Claude with a forced tool call for quest drafts, and a tool-use loop with guarded tools for the quest agent.
 - **MCP:** Streamable HTTP server mounted on the API, with `list_quests`, `get_quest`, `hold_spot` and `check_my_spot`.
-- **Render:** One Blueprint deploys the API, the web app, Postgres and a Cron Job. The cron job is the money clock: it tips or cancels quests at their deadline, locks fares and releases escrowed payouts even when nobody has the site open.
+- **Render:** One Blueprint deploys the API, the web app, Postgres, a Cron Job and a Workflow. The Cron Job is the money clock: it tips or cancels quests at their deadline, locks fares and releases escrowed payouts even when nobody has the site open. The Workflow runs settle up: one `send_invoice` task per person, each on its own instance with retries, and deterministic PayPal invoice numbers so a retry can never bill anyone twice.
 - **AG Studio + AG Grid:** The host desk is an AG Studio dashboard over three related tables (quests, PayPal events, invoices). A custom widget, Who still owes, ranks open PayPal invoices with a Nudge button. AG Studio's Agent Framework runs all five built-in agents on Claude through our own endpoint, plus one tool we added, `draft_payment_reminder`: Claude writes the nudge, the host sends it through PayPal's Invoicing reminder API. Quest pages keep an AG Grid money log with CSV export.
 - **Frontend:** Next.js and Tailwind. The design is a rail platform: a ticket for every quest, a split-flap departure board, a seat map, and a "money route" that shows each PayPal step as a station. Blue is used only for money, so you can always see what is held, charged or refunded.
 
@@ -71,7 +71,7 @@ Authorization holds are an underused tool for coordination. A hold is a commitme
 
 ## Built with
 
-PayPal Orders v2, PayPal Payments v2, PayPal Payouts, PayPal Invoicing, PayPal Agent Toolkit, PayPal JS SDK, PayPal Webhooks, Claude, Model Context Protocol, Render (web services, Postgres, Cron Jobs), AG Studio, AG Grid, FastAPI, SQLAlchemy, Next.js, Tailwind CSS.
+PayPal Orders v2, PayPal Payments v2, PayPal Payouts, PayPal Invoicing, PayPal Agent Toolkit, PayPal JS SDK, PayPal Webhooks, Claude, Model Context Protocol, Render (web services, Postgres, Cron Jobs, Workflows), AG Studio, AG Grid, FastAPI, SQLAlchemy, Next.js, Tailwind CSS.
 
 ## Built during the submission period
 

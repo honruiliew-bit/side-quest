@@ -80,7 +80,7 @@ Every proposal is re-validated by the engine at approval time. A capture can nev
 - **No money for closed quests.** If a quest closes while someone is on PayPal's approval page, their order is never authorized.
 - **Holds fit PayPal's window.** Join deadlines must be within 28 days, because authorizations last 29. Holds older than 3 days are reauthorized before capture.
 - **Agent limits.** Chat is rate limited. Only the host and people on a quest can trigger money proposals.
-- **CI** runs 26 backend tests (money lifecycle, races, closed quests, migrations, webhooks, MCP, and the Claude tool loop through the real SDK) plus frontend type checks, lint and a production build.
+- **CI** runs 30 backend tests (money lifecycle, races, closed quests, migrations, webhooks, MCP, and the Claude tool loop through the real SDK) plus frontend type checks, lint and a production build.
 
 ## Run it locally (no keys needed)
 
@@ -160,8 +160,11 @@ Each quest page also has a money log built on AG Grid Community, with filters, s
 | `sidequest-web` | Web service (Node) | The Next.js app |
 | `sidequest-db` | Render Postgres | All data. `DATABASE_URL` is wired in automatically. Tables are created on first start |
 | `sidequest-clock` | Cron Job, every 30 min | Runs `scripts/tick.py`: tips or cancels quests at their deadline, locks fares, releases escrowed host payouts |
+| `sidequest-settle` | Workflow | Settle up: `settle_up` fans out one `send_invoice` task per person, each on its own instance with retries |
 
-Render asks for the values marked `sync: false`: PayPal sandbox keys, the Anthropic key, the sandbox buyer login for the judge panel, and the public URLs. Set `API_URL` on the cron job to the API's public URL. `CRON_SECRET` is generated once and shared between the API and the cron job.
+**Why a Workflow for settle up.** Sending seven PayPal invoices is seven create-and-send round trips that can each fail on their own. On Render Workflows each one is a separate task run with automatic retries, and one failure doesn't stop the rest. Retries can't double-bill: every invoice gets a deterministic number (`SQ-<quest>-<member>-<cents>`), PayPal rejects a duplicate number, and the task then looks up the invoice it already sent. The tasks never touch the database. The API starts the run, waits for the results and applies them under the quest lock. If the run can't start, the API sends the invoices itself. If it starts but is slow, the API never resends, because approving again is idempotent. The money log notes which run sent each invoice. Code: `backend/workflows.py`, `backend/app/render_workflows.py`.
+
+Render asks for the values marked `sync: false`: PayPal sandbox keys, the Anthropic key, the sandbox buyer login for the judge panel, the public URLs, and a Render API key (`RENDER_API_KEY`, from Account Settings > API Keys) so the API can start workflow runs. Set `API_URL` on the cron job to the API's public URL. `CRON_SECRET` is generated once and shared between the API and the cron job.
 
 The database uses the smallest paid plan because free Render Postgres expires after 30 days, which would fall inside judging. To use [Supabase](https://supabase.com) instead, replace the `fromDatabase` block with `sync: false` and paste its session pooler connection string.
 
@@ -214,6 +217,7 @@ backend/
   scripts/check_sandbox.py
   app/books.py            Host desk data, invoice reminders, Claude proxy for AG Studio
   scripts/tick.py         Render Cron Job entry point
+  workflows.py            Render Workflow: settle_up and send_invoice tasks
 frontend/
   src/app/                Departures, invite page, quest page, builder, holds, books, agents
   src/components/         Ticket, departure board, seat map, money route, agent panel, ledger grid

@@ -118,9 +118,10 @@ def run_for_claude(name: str, params: dict) -> str:
 
 
 def invoice_params(*, email: str, name: str, cents: int, item: str, note: str, reference: str,
-                   description: str | None = None) -> dict:
+                   description: str | None = None, number: str | None = None) -> dict:
     return {
         "currency_code": settings.currency,
+        **({"invoice_number": number[:25]} if number else {}),
         "invoice_date": date.today().isoformat(),
         "reference": reference[:120],
         "note": note[:4000],
@@ -134,10 +135,38 @@ def invoice_params(*, email: str, name: str, cents: int, item: str, note: str, r
     }
 
 
+def invoice_number(quest_number: int, membership_id: str, cents: int) -> str:
+    """Same person, same quest, same amount: same number. PayPal refuses a duplicate invoice number,
+    so a retried send can never bill anyone twice."""
+    return f"SQ-{quest_number}-{membership_id[-6:]}-{cents}"[:25]
+
+
+def _is_duplicate_number(exc: Exception) -> bool:
+    body = getattr(getattr(exc, "response", None), "text", "") or ""
+    return "DUPLICATE_INVOICE_NUMBER" in body or "DUPLICATE_INVOICE_NUMBER" in str(exc)
+
+
+def _find_by_number(number: str) -> dict | None:
+    out = run("search_invoicing", {"resource_type": "invoice", "page_size": 5,
+                                   "invoice_filters": {"invoice_number": number}})
+    items = out.get("items") or []
+    return items[0] if items else None
+
+
 def create_and_send_invoice(*, email: str, name: str, cents: int, item: str, note: str, reference: str,
-                            description: str | None = None) -> dict[str, Any]:
-    created = run("create_invoice", invoice_params(email=email, name=name, cents=cents, item=item,
-                                                   note=note, reference=reference, description=description))
+                            description: str | None = None, number: str | None = None) -> dict:
+    try:
+        created = run("create_invoice", invoice_params(email=email, name=name, cents=cents, item=item,
+                                                       note=note, reference=reference, description=description,
+                                                       number=number))
+    except Exception as exc:
+        # A retry after a lost response: the invoice already exists. Finish it instead of billing again.
+        existing = _find_by_number(number) if number and _is_duplicate_number(exc) else None
+        if not existing:
+            raise
+        if str(existing.get("status", "")).upper() != "DRAFT":
+            return {"invoice_id": existing["id"], "status": existing.get("status", "SENT"), "link": None, "recovered": True}
+        created = existing
     invoice_id = created.get("id")
     if not invoice_id and isinstance(created.get("href"), str):
         invoice_id = created["href"].rstrip("/").split("/")[-1]

@@ -510,21 +510,48 @@ def promote(db: Session, m: Membership) -> None:
     db.flush()
 
 
-def _send_invoices(quest: Quest, jobs: list[tuple[Membership, dict]]) -> list[tuple[Membership, dict, dict | Exception]]:
-    """Network only, no database. PayPal calls run in parallel so seven invoices take one round trip, not seven."""
+def _send_invoices(quest: Quest, jobs: list[tuple[Membership, dict]]) -> tuple[list[tuple[Membership, dict, dict | Exception]], str]:
+    """Network only, no database. Returns each person's result and where the invoices were sent from.
+
+    On Render the settle_up workflow sends each invoice on its own instance with retries. Locally,
+    or if the workflow can't start, invoices go out in parallel threads. Invoice numbers are
+    deterministic either way, so nobody is billed twice."""
     from concurrent.futures import ThreadPoolExecutor
 
-    def one(job):
-        m, a = job
+    from . import render_workflows
+
+    payload = [{
+        "key": m.id, "email": m.user.email, "name": m.user.name, "cents": a["cents"], "item": a["item"],
+        "note": a["note"], "reference": quest.code, "description": a.get("description"),
+        "number": toolkit.invoice_number(quest.number, m.id, a["cents"]),
+    } for m, a in jobs]
+
+    if render_workflows.enabled():
         try:
-            return m, a, toolkit.create_and_send_invoice(
-                email=m.user.email, name=m.user.name, cents=a["cents"], item=a["item"], note=a["note"],
-                reference=quest.code, description=a.get("description"))
+            results, run_id = render_workflows.settle_up(payload)
+            by_key = {r.get("key"): r for r in results}
+            out = []
+            for m, a in jobs:
+                r = by_key.get(m.id) or {"error": "No result from the workflow."}
+                out.append((m, a, RuntimeError(r["error"]) if r.get("error") else r))
+            return out, f"Render Workflows run {run_id}"
+        except render_workflows.NotStarted as exc:
+            import logging
+
+            logging.getLogger("sidequest").warning("Render Workflows didn't start, sending in-process: %s", exc)
+        except render_workflows.StillRunning as exc:
+            raise QuestError(f"Render is still sending these invoices (run {exc}). Approve again in a minute. "
+                             f"Invoices that already went out won't be sent twice.")
+
+    def one(item):
+        (m, a), job = item
+        try:
+            return m, a, toolkit.create_and_send_invoice(**{k: v for k, v in job.items() if k != "key"})
         except Exception as exc:  # recorded per person
             return m, a, exc
 
     with ThreadPoolExecutor(max_workers=min(6, max(1, len(jobs)))) as pool:
-        return list(pool.map(one, jobs))
+        return list(pool.map(one, zip(jobs, payload))), "the API"
 
 
 ACTION_TYPES = {"void_hold", "promote", "refund", "invoice"}
@@ -607,7 +634,10 @@ def decide_proposal(db: Session, p: Proposal, approve: bool) -> Proposal:
     results = []
     invoice_jobs = [(by_id[a["membership_id"]], {**a, "description": (p.evidence and _evidence_text(p.evidence)) or None})
                     for a in actions if a["type"] == "invoice"]
-    sent = {m.id: out for m, _, out in _send_invoices(quest, invoice_jobs)} if invoice_jobs else {}
+    sent, sent_from = {}, ""
+    if invoice_jobs:
+        outcomes, sent_from = _send_invoices(quest, invoice_jobs)
+        sent = {m.id: out for m, _, out in outcomes}
     try:
         for a in actions:
             m = by_id[a["membership_id"]]
@@ -624,7 +654,7 @@ def decide_proposal(db: Session, p: Proposal, approve: bool) -> Proposal:
                 if isinstance(out, Exception):
                     raise QuestError(f"PayPal didn't send {m.user.name}'s invoice: {out}")
                 log(db, quest, "invoice", a["cents"], membership=m, ref=out["invoice_id"],
-                    provider="toolkit", note=f"Invoice sent to {m.user.name}: {a['item']}")
+                    provider="toolkit", note=f"Invoice sent to {m.user.name}: {a['item']}. Sent from {sent_from}.")
                 db.add(Invoice(quest_id=quest.id, membership_id=m.id, user_id=m.user_id,
                                paypal_id=out["invoice_id"], cents=a["cents"], item=a["item"][:200]))
             results.append({"type": a["type"], "name": a["name"], "ok": True})
@@ -637,7 +667,8 @@ def decide_proposal(db: Session, p: Proposal, approve: bool) -> Proposal:
     _reseat(quest)
     p.status = "executed"
     p.result = {"done": results}
-    say(db, quest, f"{quest.host.name} approved: {p.title}. Done on PayPal.", meta={"event": "executed"})
+    via = f" Invoices sent from {sent_from}." if sent_from.startswith("Render") else ""
+    say(db, quest, f"{quest.host.name} approved: {p.title}. Done on PayPal.{via}", meta={"event": "executed"})
     db.flush()
     _expire_stale(db, quest, keep=p.id)
     return p

@@ -1,5 +1,6 @@
 # Render Blueprint: the whole stack in one click (Dashboard > New > Blueprint).
-# API (FastAPI + MCP), web (Next.js), Postgres, and a Cron Job that runs the money clock.
+# API (FastAPI + MCP), web (Next.js), Postgres, a Cron Job that runs the money clock,
+# and a Workflow that sends settle-up invoices in parallel.
 
 services:
   - type: web
@@ -41,6 +42,15 @@ services:
         sync: false
       - key: ANTHROPIC_API_KEY
         sync: false
+      # Render Workflows: settle up sends each invoice as its own task run. Create an API key in
+      # Account Settings > API Keys. Without it, invoices are sent from the API instead.
+      - key: RENDER_API_KEY
+        sync: false
+      - key: RENDER_WORKFLOW_SLUG
+        fromService:
+          name: sidequest-settle
+          type: workflow
+          property: slug
 
   - type: web
     name: sidequest-web
@@ -75,6 +85,29 @@ services:
           name: sidequest-api
           type: web
           envVarKey: CRON_SECRET
+
+  # Settle up on Render Workflows: one send_invoice task per person, each on its own instance with
+  # retries. Invoice numbers are deterministic, so a retry can't bill anyone twice.
+  - type: workflow
+    name: sidequest-settle
+    runtime: python
+    region: oregon
+    rootDir: backend
+    buildCommand: pip install -r requirements.txt && pip install --no-deps paypal-agent-toolkit==1.11.0
+    startCommand: python workflows.py
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.12.7
+      - key: PAYPAL_CLIENT_ID
+        fromService:
+          name: sidequest-api
+          type: web
+          envVarKey: PAYPAL_CLIENT_ID
+      - key: PAYPAL_CLIENT_SECRET
+        fromService:
+          name: sidequest-api
+          type: web
+          envVarKey: PAYPAL_CLIENT_SECRET
 
 databases:
   # Smallest paid plan. Free Render Postgres expires 30 days after creation, which would land

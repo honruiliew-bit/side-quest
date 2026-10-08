@@ -54,6 +54,10 @@ class Settings:
 
     # AI
     anthropic_api_key: str = os.getenv("ANTHROPIC_API_KEY", "")
+    # Render Workflows: settle up fans out one task per invoice. Off unless both are set.
+    render_api_key: str = os.getenv("RENDER_API_KEY", "")
+    render_workflow_slug: str = os.getenv("RENDER_WORKFLOW_SLUG", "")
+    render_workflow_wait: int = int(os.getenv("RENDER_WORKFLOW_WAIT", "90"))
     anthropic_model: str = os.getenv("ANTHROPIC_MODEL", "claude-sonnet-5-5")
 
     @property
