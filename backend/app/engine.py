@@ -718,6 +718,18 @@ def read_receipt(quest: Quest, data: bytes, media_type: str) -> tuple[dict | Non
         return None, f"Couldn't read it automatically ({type(exc).__name__}: {detail[:160]}). Check it by eye."
 
 
+DEMO_MARKERS = ("sample", "demo", "not a real purchase", "generated for")
+
+
+def _accept_demo_sample(reading: dict) -> dict:
+    """The guided tour hands the host an official sample receipt. Claude rightly spots that it's a
+    sample, so on tour quests only, the sample label isn't held against it. Everywhere else a
+    receipt marked as a sample is still rejected."""
+    concerns = [c for c in (reading.get("concerns") or []) if not any(m in str(c).lower() for m in DEMO_MARKERS)]
+    looks_real = reading.get("merchant") and reading.get("total_usd") is not None
+    return {**reading, "concerns": concerns, "is_receipt": bool(reading.get("is_receipt") or looks_real)}
+
+
 def add_receipt(db: Session, quest: Quest, user: User, filename: str, media_type: str, data: bytes,
                 host_total_cents: int | None = None, pre_read: tuple[dict | None, str | None] | None = None,
                 host_cost_line: str | None = None) -> Receipt:
@@ -740,6 +752,8 @@ def add_receipt(db: Session, quest: Quest, user: User, filename: str, media_type
                 media_type=media_type, data=data, sha256=digest, issues=[])
     shared = {l["label"]: int(l["cents"]) for l in quest.cost_lines if l.get("split") == "shared"}
     reading, read_error = pre_read if pre_read is not None else read_receipt(quest, data, media_type)
+    if reading is not None and quest.tour:
+        reading = _accept_demo_sample(reading)
     issues: list[str] = [read_error] if read_error else []
 
     if reading is None:

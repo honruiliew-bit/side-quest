@@ -56,4 +56,10 @@ def read(quest: Quest, data: bytes, media_type: str) -> dict | None:
                                      "data": base64.b64encode(data).decode()}},
         {"type": "text", "text": f"Quest: {quest.title} on {quest.starts_at:%Y-%m-%d}. Shared costs: {shared}."},
     ]
-    return llm.call_tool(SYSTEM, content, _tool(quest), max_tokens=800)
+    system = SYSTEM
+    if quest.tour:
+        system += ("\nThis quest is Sidequest's guided demo. Its official sample receipt is labelled "
+                   "'SAMPLE RECEIPT, SIDEQUEST DEMO'. For this quest, read that sample like a real receipt: "
+                   "report the merchant, date and total it shows and set is_receipt to true. "
+                   "Still report any other problem you see.")
+    return llm.call_tool(system, content, _tool(quest), max_tokens=800)

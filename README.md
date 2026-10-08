@@ -80,7 +80,7 @@ Every proposal is re-validated by the engine at approval time. A capture can nev
 - **No money for closed quests.** If a quest closes while someone is on PayPal's approval page, their order is never authorized.
 - **Holds fit PayPal's window.** Join deadlines must be within 28 days, because authorizations last 29. Holds older than 3 days are reauthorized before capture.
 - **Agent limits.** Chat is rate limited. Only the host and people on a quest can trigger money proposals.
-- **CI** runs 30 backend tests (money lifecycle, races, closed quests, migrations, webhooks, MCP, and the Claude tool loop through the real SDK) plus frontend type checks, lint and a production build.
+- **CI** runs 31 backend tests (money lifecycle, races, closed quests, migrations, webhooks, MCP, and the Claude tool loop through the real SDK) plus frontend type checks, lint and a production build.
 
 ## Run it locally (no keys needed)
 

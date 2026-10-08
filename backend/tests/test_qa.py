@@ -308,3 +308,24 @@ def test_settle_up_runs_on_render_workflows_and_falls_back_safely(client, monkey
     r = client.post(f"/proposals/{p['id']}/decide", json={"approve": True}, headers=hon)
     assert r.status_code == 400 and "still sending" in r.json()["detail"]
     assert not [e for e in client.get(f"/quests/{qid}", headers=hon).json()["ledger"] if e["kind"] == "invoice"]
+
+
+def test_tour_accepts_the_official_sample_receipt_but_real_quests_do_not(client):
+    from app import engine
+    from app.db import session_scope
+    from app.models import Quest, User
+
+    claude_says = {"is_receipt": False, "legible": True, "merchant": "Route 9 Fuel", "date": None, "total_usd": 95.0,
+                   "category": "fuel", "cost_line": "Gas and tolls",
+                   "concerns": ["Banner at top reads 'SAMPLE RECEIPT, SIDEQUEST DEMO'", "Footer states 'Not a real purchase.'"]}
+    qid, _ = _locked_tour(client)
+    with session_scope() as db:
+        tour = db.get(Quest, qid)
+        hon = db.get(User, tour.host_id)
+        r = engine.add_receipt(db, tour, hon, "sample.png", "image/png", b"\x89PNGsample-tour", pre_read=(claude_says, None))
+        assert r.status == "verified" and r.total_cents == 9500 and r.issues == []
+
+        real = db.query(Quest).filter(Quest.line_code == "RI", Quest.tour.isnot(True)).first()
+        host = db.get(User, real.host_id)
+        r2 = engine.add_receipt(db, real, host, "sample.png", "image/png", b"\x89PNGsample-real", pre_read=(claude_says, None))
+        assert r2.status == "rejected" and any("SAMPLE" in i for i in r2.issues)
