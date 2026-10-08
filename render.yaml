@@ -1,3 +1,6 @@
+# Render Blueprint: the whole stack in one click (Dashboard > New > Blueprint).
+# API (FastAPI + MCP), web (Next.js), Postgres, and a Cron Job that runs the money clock.
+
 services:
   - type: web
     name: sidequest-api
@@ -10,12 +13,14 @@ services:
     envVars:
       - key: PYTHON_VERSION
         value: 3.12.7
+      - key: DATABASE_URL
+        fromDatabase:
+          name: sidequest-db
+          property: connectionString
       - key: APP_SECRET
         generateValue: true
       - key: CRON_SECRET
         generateValue: true
-      - key: DATABASE_URL
-        sync: false
       - key: FRONTEND_URL
         sync: false
       - key: PUBLIC_API_URL
@@ -27,6 +32,10 @@ services:
       - key: PAYPAL_CLIENT_SECRET
         sync: false
       - key: PAYPAL_WEBHOOK_ID
+        sync: false
+      - key: DEMO_BUYER_EMAIL
+        sync: false
+      - key: DEMO_BUYER_PASSWORD
         sync: false
       - key: DEMO_CARD_NUMBER
         sync: false
@@ -41,5 +50,37 @@ services:
     buildCommand: npm ci && npm run build
     startCommand: npm run start -- -p $PORT
     envVars:
+      - key: NODE_VERSION
+        value: "22"
       - key: NEXT_PUBLIC_API_URL
         sync: false
+
+  # Holds expire and deadlines pass whether or not anyone is on the site. Every 30 minutes this
+  # tips or cancels quests at their deadline, locks fares, and releases escrowed host payouts.
+  # It calls the public URL because free web services can't receive private network traffic.
+  - type: cron
+    name: sidequest-clock
+    runtime: python
+    rootDir: backend
+    schedule: "*/30 * * * *"
+    buildCommand: "true"
+    startCommand: python scripts/tick.py
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.12.7
+      - key: API_URL
+        sync: false
+      - key: CRON_SECRET
+        fromService:
+          name: sidequest-api
+          type: web
+          envVarKey: CRON_SECRET
+
+databases:
+  # Smallest paid plan. Free Render Postgres expires 30 days after creation, which would land
+  # inside the Dec 1-15 judging window.
+  - name: sidequest-db
+    plan: 0.1c-256mb
+    databaseName: sidequest
+    user: sidequest
+    ipAllowList: []  # private network only; the API connects over Render's internal URL

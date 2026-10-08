@@ -73,6 +73,13 @@ def membership_out(m) -> dict:
     }
 
 
+def ledger_out(e: LedgerEntry) -> dict:
+    return {
+        "id": e.id, "kind": e.kind, "cents": e.cents, "ref": e.paypal_ref, "provider": e.provider,
+        "note": e.note, "confirmed": e.confirmed, "user": user_out(e.user), "created_at": iso(e.created_at),
+    }
+
+
 def quest_detail(db: Session, q: Quest, viewer: User | None) -> dict:
     out = quest_card(q)
     people = seated(q)
@@ -129,10 +136,7 @@ def quest_detail(db: Session, q: Quest, viewer: User | None) -> dict:
         "standby": [membership_out(m) for m in standby(q)],
         "money": {"held_cents": held, "charged_cents": charged, "refunded_cents": refunded, "paid_out_cents": paid_out},
         "viewer": {"role": role, "membership": mine},
-        "ledger": [{
-            "id": e.id, "kind": e.kind, "cents": e.cents, "ref": e.paypal_ref, "provider": e.provider,
-            "note": e.note, "confirmed": e.confirmed, "user": user_out(e.user), "created_at": iso(e.created_at),
-        } for e in ledger],
+        "ledger": [ledger_out(e) for e in ledger],
         "messages": [{
             "id": msg.id, "role": msg.role, "body": msg.body, "user": user_out(msg.user),
             "meta": msg.meta or {}, "created_at": iso(msg.created_at),

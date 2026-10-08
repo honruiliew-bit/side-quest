@@ -10,6 +10,7 @@ const NAV = [
   { href: "/", label: "Departures" },
   { href: "/new", label: "Start a quest" },
   { href: "/me", label: "My holds" },
+  { href: "/books", label: "Books" },
   { href: "/agents", label: "For AI agents" },
 ];
 

@@ -13,7 +13,7 @@ import binascii
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Request, Response
 from pydantic import BaseModel, Field
-from sqlalchemy import select
+from sqlalchemy import or_, select
 from sqlalchemy.orm import Session
 
 from . import engine, seed as seeding
@@ -21,9 +21,9 @@ from .agent import builder, keeper, shopper
 from .auth import PERSONAS, ensure_personas, get_or_create_user, issue_token, optional_user, require_user
 from .config import settings
 from .db import get_db
-from .models import Membership, Proposal, Quest, Receipt, User, WebhookEvent, utcnow
+from .models import LedgerEntry, Membership, Proposal, Quest, Receipt, User, WebhookEvent, utcnow
 from .paypal.gateway import PayPalError, gateway_for, paypal_mode
-from .views import membership_out, quest_card, quest_detail, user_out
+from .views import ledger_out, membership_out, quest_card, quest_detail, user_out
 
 router = APIRouter()
 
@@ -148,6 +148,25 @@ def me(user: User = Depends(require_user), db: Session = Depends(get_db)):
         "memberships": [{**membership_out(m), "quest": quest_card(m.quest)} for m in rows],
         "hosting": [quest_card(q) for q in hosting],
     }
+
+
+@router.get("/me/ledger")
+def my_ledger(user: User = Depends(require_user), db: Session = Depends(get_db)):
+    """Every PayPal event on quests you host, plus your own events on quests you joined."""
+    hosted = select(Quest.id).where(Quest.host_id == user.id)
+    rows = db.execute(
+        select(LedgerEntry, Quest)
+        .join(Quest, Quest.id == LedgerEntry.quest_id)
+        .where(or_(LedgerEntry.quest_id.in_(hosted), LedgerEntry.user_id == user.id))
+        .order_by(LedgerEntry.created_at.desc())
+        .limit(2000)
+    ).all()
+    return [{
+        **ledger_out(e),
+        "quest": {"id": q.id, "title": q.title, "line_code": q.line_code, "tz": q.tz,
+                  "role": "host" if q.host_id == user.id else "member", "tour": bool(q.tour)},
+        "simulated": e.provider == "sim",
+    } for e, q in rows]
 
 
 # --- Quests ---------------------------------------------------------------------

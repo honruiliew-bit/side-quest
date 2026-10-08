@@ -80,7 +80,7 @@ Every proposal is re-validated by the engine at approval time. A capture can nev
 - **No money for closed quests.** If a quest closes while someone is on PayPal's approval page, their order is never authorized.
 - **Holds fit PayPal's window.** Join deadlines must be within 28 days, because authorizations last 29. Holds older than 3 days are reauthorized before capture.
 - **Agent limits.** Chat is rate limited. Only the host and people on a quest can trigger money proposals.
-- **CI** runs 19 backend tests (money lifecycle, races, closed quests, migrations, webhooks, MCP, and the Claude tool loop through the real SDK) plus frontend type checks, lint and a production build.
+- **CI** runs 24 backend tests (money lifecycle, races, closed quests, migrations, webhooks, MCP, and the Claude tool loop through the real SDK) plus frontend type checks, lint and a production build.
 
 ## Run it locally (no keys needed)
 
@@ -135,9 +135,31 @@ Set `ANTHROPIC_API_KEY` in `backend/.env`. The quest builder then uses a forced 
 
 The MCP endpoint is `https://<your-api>/mcp/` (streamable HTTP). Tools: `list_quests`, `get_quest`, `hold_spot`, `check_my_spot`. The **For AI agents** page in the app has copyable config for Claude Desktop and custom connectors.
 
-## Deploy
+## Books: every PayPal event in one grid (AG Grid)
 
-`render.yaml` deploys both services on [Render](https://render.com) with one blueprint. Use a [Supabase](https://supabase.com) Postgres connection string for `DATABASE_URL` (Project settings > Database > Session pooler). Tables are created on first start.
+The **Books** page and each quest's **Money log** are built on [AG Grid](https://www.ag-grid.com) Community. Every row is one PayPal call: the hold, capture, void, refund, invoice or payout, with its PayPal ID and whether a webhook confirmed it.
+
+- Hosts see every traveler on their quests. Members see only their own rows.
+- Filter by event type, search by name, PayPal ID or note, and sort or filter any column.
+- The pinned bottom row shows net charged (captures minus refunds) for whatever is in view.
+- **Export CSV** gives timestamps and plain two-decimal amounts, ready for a spreadsheet or an expense claim.
+
+Data comes from `GET /me/ledger`.
+
+## Deploy on Render
+
+`render.yaml` is a [Render](https://render.com) Blueprint for the whole stack. In the Render dashboard choose **New > Blueprint** and point it at this repo. It creates:
+
+| Resource | Type | What it does |
+| --- | --- | --- |
+| `sidequest-api` | Web service (Python) | FastAPI, the quest engine, PayPal, Claude, and the MCP server at `/mcp/` |
+| `sidequest-web` | Web service (Node) | The Next.js app |
+| `sidequest-db` | Render Postgres | All data. `DATABASE_URL` is wired in automatically. Tables are created on first start |
+| `sidequest-clock` | Cron Job, every 30 min | Runs `scripts/tick.py`: tips or cancels quests at their deadline, locks fares, releases escrowed host payouts |
+
+Render asks for the values marked `sync: false`: PayPal sandbox keys, the Anthropic key, the sandbox buyer login for the judge panel, and the public URLs. Set `API_URL` on the cron job to the API's public URL. `CRON_SECRET` is generated once and shared between the API and the cron job.
+
+The database uses the smallest paid plan because free Render Postgres expires after 30 days, which would fall inside judging. To use [Supabase](https://supabase.com) instead, replace the `fromDatabase` block with `sync: false` and paste its session pooler connection string.
 
 To deploy the frontend on Vercel instead, import the repo with root directory `frontend` and set `NEXT_PUBLIC_API_URL`. The backend's CORS rules already allow `sidequest*.vercel.app`.
 
@@ -186,9 +208,11 @@ backend/
   app/mcp_server.py       Sidequest as an MCP server
   app/pricing.py          The split
   scripts/check_sandbox.py
+  scripts/tick.py         Render Cron Job entry point
 frontend/
-  src/app/                Departures, invite page, quest page, builder, holds, agents
-  src/components/         Ticket, departure board, seat map, money route, agent panel
+  src/app/                Departures, invite page, quest page, builder, holds, books, agents
+  src/components/         Ticket, departure board, seat map, money route, agent panel, ledger grid
+render.yaml               Render Blueprint: API, web, Postgres, cron
 ```
 
 ## License

@@ -27,11 +27,13 @@ Sidequest adds a small fee to each share, collected only when a quest runs (`PLA
 
 ## How we built it
 
-- **Backend:** FastAPI, SQLAlchemy and Postgres on Supabase. A single quest engine owns every money move and enforces the rules the agent can't bend: captures never exceed the authorization, refunds never exceed the capture.
+- **Backend:** FastAPI, SQLAlchemy and Render Postgres. A single quest engine owns every money move and enforces the rules the agent can't bend: captures never exceed the authorization, refunds never exceed the capture.
 - **PayPal:** Orders v2 with `intent: AUTHORIZE`, authorization capture (partial, `final_capture`), void, reauthorize after the honor period, capture refunds, Payouts v1, webhooks with signature verification, and JS SDK Smart Buttons with PayPal, Venmo and cards.
 - **PayPal Agent Toolkit:** It ships adapters for OpenAI Agents, LangChain and CrewAI. We wrote a Claude adapter over its shared layer, so the agent uses the toolkit's own tool definitions, parameter models and handlers for orders and invoicing.
 - **AI:** Claude with a forced tool call for quest drafts, and a tool-use loop with guarded tools for the quest agent.
 - **MCP:** Streamable HTTP server mounted on the API, with `list_quests`, `get_quest`, `hold_spot` and `check_my_spot`.
+- **Render:** One Blueprint deploys the API, the web app, Postgres and a Cron Job. The cron job is the money clock: it tips or cancels quests at their deadline, locks fares and releases escrowed payouts even when nobody has the site open.
+- **AG Grid:** The Books page and every quest's money log. Each row is one PayPal call with its ID. Hosts filter, search and export CSV for their records, and a pinned row shows net charged for the current view.
 - **Frontend:** Next.js and Tailwind. The design is a rail platform: a ticket for every quest, a split-flap departure board, a seat map, and a "money route" that shows each PayPal step as a station. Blue is used only for money, so you can always see what is held, charged or refunded.
 
 ## Challenges
@@ -64,9 +66,13 @@ Authorization holds are an underused tool for coordination. A hold is a commitme
 1. Open the hosted demo and click **Take the 2-minute tour**.
 2. In step 1, approve the hold in PayPal's sandbox popup with the buyer login shown in the panel. Pay with the card or balance, not Pay in 4.
 3. Follow the checklist. Each step switches to the right person and runs the next PayPal action.
-4. Scroll to **Money log** to see every PayPal call with its ID.
-5. On **For AI agents**, click **Call list_quests**, then **Call hold_spot**, to see the agentic commerce flow without installing anything.
+4. Scroll to **Money log** to see every PayPal call with its ID. Open **Books** in the top bar for all your quests in one grid, and try **Export CSV**.
+5. On **For AI agents**, ask the assistant to find a quest and hold a spot. It uses the same MCP tools any AI assistant would, and you approve the hold on PayPal.
 
 ## Built with
 
-PayPal Orders v2, PayPal Payments v2, PayPal Payouts, PayPal Invoicing, PayPal Agent Toolkit, PayPal JS SDK, PayPal Webhooks, Claude, Model Context Protocol, FastAPI, SQLAlchemy, Supabase, Next.js, Tailwind CSS, Render.
+PayPal Orders v2, PayPal Payments v2, PayPal Payouts, PayPal Invoicing, PayPal Agent Toolkit, PayPal JS SDK, PayPal Webhooks, Claude, Model Context Protocol, Render (web services, Postgres, Cron Jobs), AG Grid, FastAPI, SQLAlchemy, Next.js, Tailwind CSS.
+
+## Built during the submission period
+
+All code was written from scratch after the submission period opened on October 1, 2026. Side Quest started as a concept in a university venture course. There was no prior code.

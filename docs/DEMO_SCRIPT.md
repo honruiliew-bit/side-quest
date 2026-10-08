@@ -22,9 +22,9 @@ Judging weighs presentation equally with the other four criteria, and Best Demo 
 
 ## 1:05 to 1:25. Lock and charge
 
-**Visual:** Switch to Hon. Lock and charge. Money route reaches Everyone charged. Scroll the money log.
+**Visual:** Switch to Hon. Lock and charge. Money route reaches Everyone charged. Scroll the money log, click the Charges filter, then cut to Books for one second.
 
-**Voice:** "When the host locks, PayPal captures each hold at the final split. Never more than anyone approved. Every call is in the log with its PayPal ID, and webhooks confirm each one."
+**Voice:** "When the host locks, PayPal captures each hold at the final split. Never more than anyone approved. Every call is in the log with its PayPal ID, and webhooks confirm each one. Hosts get the whole book, exportable."
 
 ## 1:25 to 2:05. The agent
 
@@ -56,4 +56,5 @@ Judging weighs presentation equally with the other four criteria, and Best Demo 
 - Use a sandbox personal account with a short email for the approval.
 - Hide the bookmarks bar and extensions.
 - Record each section separately and cut together. Keep the total under 3:00.
-- Upload to YouTube as unlisted or public. Devpost needs the link.
+- Upload to YouTube as public. The rules ask for a public video.
+- Show the URL bar once on the Render domain, so judges see the live deployment.

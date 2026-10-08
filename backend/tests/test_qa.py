@@ -195,3 +195,17 @@ def test_receipts_drive_the_settle_up(client):
     assert "receipt" in p["rationale"]
     img = client.get(f"/receipts/{p['evidence'][0]['id']}/image")
     assert img.status_code == 200 and img.headers["content-type"] == "image/png"
+
+
+def test_books_show_hosts_everything_and_members_only_their_own(client):
+    hon = client.get("/me/ledger", headers=login(client, "hon")).json()
+    hv = [r for r in hon if r["quest"]["line_code"] == "HV" and not r["quest"]["tour"]]
+    assert hv and all(r["quest"]["role"] == "host" for r in hv)
+    assert len({r["user"]["id"] for r in hv if r["user"]}) > 1  # the host sees every traveler's holds
+
+    dev_headers = login(client, "dev")
+    dev_id = client.get("/me", headers=dev_headers).json()["user"]["id"]
+    dev = client.get("/me/ledger", headers=dev_headers).json()
+    assert dev, "dev joined seeded quests, so he has entries"
+    assert all(r["user"]["id"] == dev_id for r in dev if r["quest"]["role"] == "member")
+    assert client.get("/me/ledger").status_code == 401
