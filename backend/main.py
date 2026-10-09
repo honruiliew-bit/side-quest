@@ -27,6 +27,10 @@ log = logging.getLogger("sidequest")
 
 
 def _tick_once() -> None:
+    from app import demo
+
+    if demo.maybe_reset():
+        return
     with session_scope() as db:
         counts = tick(db)
         if any(counts.values()):

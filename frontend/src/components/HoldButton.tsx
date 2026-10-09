@@ -102,6 +102,7 @@ export function HoldButton({ q, onDone }: { q: QuestDetail; onDone: (q: QuestDet
       {pending && (
         <MockPayPalSheet
           amountCents={pending.hold_cents}
+          feeCents={q.hold_fee_cents}
           funding={pending.approve_url ?? "PayPal"}
           description={`${q.code} ${q.title}`}
           orderId={pending.order_id}

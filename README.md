@@ -48,6 +48,8 @@ Open the [live demo](https://sidequest-web-q5pq.onrender.com) and click **Take t
 | 4. Settle up from a receipt | Hon | Claude reads the gas receipt. Each person gets a PayPal invoice for their share, with the receipt linked. |
 | 5. The host gets paid | anyone | A PayPal payout to the host. In real use it waits 24 hours after the trip. |
 
+The last screen offers **See how disputes are handled**, which switches you to Kai, the demo admin, on an open report.
+
 The sandbox buyer login is shown in step 1. The **money log** on the quest page lists every hold, charge, refund and payout. PayPal API names and object IDs are staff-only: switch to Kai to see them.
 
 Then try:
@@ -66,6 +68,7 @@ Then try:
 | PayPal capability | Where Sidequest uses it |
 |---|---|
 | Orders v2, `intent: AUTHORIZE` | Holding a spot at the price for the minimum group, the most anyone can pay |
+| Order items and amount breakdown | PayPal's approval page itemizes the trip share and Sidequest's booking fee |
 | Capture authorization (partial, `final_capture`) | Locking a quest. Each hold is captured at the real split, never above the hold |
 | Void authorization | Leaving before lock, quests that don't reach their minimum, unused standby holds |
 | Reauthorize | Holds older than the 3-day honor period are reauthorized before capture |
@@ -182,8 +185,9 @@ On a $75 share the member approves $80.00. PayPal takes about $3.34 (3.49% + $0.
 - **Hosts never judge their own case.** Only an admin can resolve a report, and every decision is written to an audit log the app gives no way to edit.
 - **Fees can't change after you commit.** Each quest stores the fee terms it was posted with.
 - **The books are checked against PayPal.** Reconciliation compares every capture, refund, payout and invoice with PayPal's record.
+- **The demo heals itself.** Anyone can play the admin, so the demo data resets every night at 4 am New York time (`DEMO_RESET_HOUR`). "Ask Claude" on the admin page is rate limited.
 - **Prompt injection resistant.** Member messages are treated as data, so one person can't talk Claude into moving someone else's money.
-- **CI** runs 41 backend tests (money lifecycle, races, webhooks, MCP, the Claude tool loop through the real SDK, the Render Workflow tasks, fees, admin decisions and PayPal disputes) plus type checks, lint and a production build.
+- **CI** runs 44 backend tests (money lifecycle, races, webhooks, MCP, the Claude tool loop through the real SDK, the Render Workflow tasks, fees, admin decisions and PayPal disputes) plus type checks, lint and a production build.
 
 ---
 

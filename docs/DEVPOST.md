@@ -74,7 +74,7 @@ Authorization holds are an underused tool for coordination. A hold is a commitme
 3. Follow the five steps in the bar. Each one switches to the right person and runs the next PayPal action.
 4. Scroll to **Money log** to see every hold, charge, refund and payout. Switch to **Kai** (admin) to see the PayPal API and ID behind each one. Members and hosts never see PayPal IDs.
 5. Open **My money** as Hon for the host desk. Press **Nudge** on Leo, then **Edit with Claude** and try **Nudge the oldest invoice**.
-6. **Admin**: open the person menu and pick **Kai**. Ask Claude about the kayak report (it suggests splitting the outfitter's $100 refund, $20 each), decide it, then check the Money, Payments, Fees and Audit log tabs.
+6. **Admin**: at the end of the tour click **See how disputes are handled**, or pick **Kai** from the person menu. Ask Claude about the kayak report (it suggests splitting the outfitter's $100 refund, $20 each), decide it, then check the Money, Payments, Fees and Audit log tabs. Try anything: the demo data resets every night at 4 am ET.
 7. **For AI agents** (footer): ask the assistant to find a quest and hold a spot. It uses the same MCP tools any AI assistant would, and you approve the hold on PayPal.
 
 ## Built with

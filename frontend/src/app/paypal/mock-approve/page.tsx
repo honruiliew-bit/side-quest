@@ -29,6 +29,7 @@ export default function MockApprove() {
         <MockPayPalSheet
           inline
           amountCents={data.membership.hold_cents}
+          feeCents={data.membership.hold_cents === data.quest.hold_cents ? data.quest.hold_fee_cents : 0}
           funding="PayPal"
           description={`${data.quest.code} ${data.quest.title}, for ${data.membership.user.name}`}
           orderId={token}

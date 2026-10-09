@@ -12,7 +12,9 @@ export function MockPayPalSheet({
   onApprove,
   onCancel,
   inline = false,
+  feeCents = 0,
 }: {
+  feeCents?: number;
   amountCents: number;
   funding: string;
   description: string;
@@ -52,6 +54,12 @@ export function MockPayPalSheet({
         <div className="tab text-[40px] font-extrabold leading-none text-money" style={{ fontStretch: "62%" }}>
           {money(amountCents)}
         </div>
+        {feeCents > 0 && (
+          <dl className="mt-3 flex flex-col gap-1 border-t border-rule pt-2 text-[14px]">
+            <div className="flex justify-between"><dt>Trip share</dt><dd className="tab">{money(amountCents - feeCents)}</dd></div>
+            <div className="flex justify-between"><dt>Sidequest booking fee</dt><dd className="tab">{money(feeCents)}</dd></div>
+          </dl>
+        )}
         <p className="mt-2 text-[14px]">This is a hold, not a charge. You only pay the final split if the quest runs.</p>
       </div>
       <p className="mt-4 text-[13px] text-muted">

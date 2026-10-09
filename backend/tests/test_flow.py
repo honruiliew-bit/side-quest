@@ -10,6 +10,7 @@ if DB.exists():
 os.environ.update({
     "DATABASE_URL": f"sqlite:///{DB}",
     "PAYPAL_MODE": "mock",
+    "DEMO_RESET_HOUR": "-1",  # never reset mid-test; test_admin covers the reset itself
     # Amounts in these tests are the bare split. Fees have their own tests in test_admin.py.
     "BOOKING_FEE_BPS": "0",
     "BOOKING_FEE_FIXED_CENTS": "0",

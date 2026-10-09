@@ -14,7 +14,7 @@ const STREAMS = [
 ];
 
 export function FeesTab({ onChanged }: { onChanged: () => void }) {
-  const { toast } = useSession();
+  const { toast, config } = useSession();
   const [fees, setFees] = useState<Fees | null>(null);
   const [bookingPct, setBookingPct] = useState("");
   const [fixed, setFixed] = useState("");
@@ -104,7 +104,10 @@ export function FeesTab({ onChanged }: { onChanged: () => void }) {
             <button className="btn btn-ink" disabled={!valid || !changed || saving || reason.trim().length < 3}>
               {saving ? "Saving..." : "Apply to new quests"}
             </button>
-            <span className="text-[13px] text-muted">{fees.active_quests} active quests keep the fees they were posted with.</span>
+            <span className="text-[13px] text-muted">
+              {fees.active_quests} active quests keep the fees they were posted with.
+              {config?.demo_reset ? ` In the demo, changes last until the nightly reset at ${config.demo_reset}.` : ""}
+            </span>
           </div>
         </form>
 

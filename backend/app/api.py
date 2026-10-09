@@ -95,7 +95,14 @@ def config():
         "ai": "claude" if settings.ai_enabled else "offline",
         "model": settings.anthropic_model if settings.ai_enabled else None,
         "mcp_url": f"{settings.public_api_url}/mcp/",
+        "demo_reset": _demo_reset_label(),
     }
+
+
+def _demo_reset_label() -> str | None:
+    from . import demo
+
+    return demo.label()
 
 
 # --- Auth ------------------------------------------------------------------------
@@ -547,6 +554,10 @@ def _quest_for_resource(db: Session, rid: str | None) -> str | None:
 def cron_tick(x_cron_secret: str | None = Header(default=None), db: Session = Depends(get_db)):
     if not settings.cron_secret or x_cron_secret != settings.cron_secret:
         raise HTTPException(403, "Bad cron secret.")
+    from . import demo
+
+    if demo.maybe_reset():
+        return {"demo_reset": True}
     counts = engine.tick(db)
     db.commit()
     return counts
@@ -614,10 +625,9 @@ def demo_tour(db: Session = Depends(get_db)):
 
 @router.post("/demo/reset")
 def demo_reset(db: Session = Depends(get_db)):
-    _demo_only()
-    seeding.reset(db)
-    from .db import session_scope
+    from . import demo
 
-    with session_scope() as fresh:
-        seeding.seed(fresh)
+    _demo_only()
+    db.close()
+    demo.reset("Demo data reset from the menu.")
     return {"ok": True}

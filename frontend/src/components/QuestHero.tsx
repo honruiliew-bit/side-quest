@@ -112,7 +112,7 @@ function Fare({ q, onChange }: { q: QuestDetail; onChange: (q: QuestDetail) => v
 
   let label = "Most you'll pay";
   let amount = q.hold_cents;
-  let note = `Drops to ${money(lowest)} if ${q.max_people} people join.`;
+  let note = `Drops to ${money(lowest)} if ${q.max_people} people join.${q.hold_fee_cents ? ` Includes a ${money(q.hold_fee_cents)} booking fee.` : ""}`;
   if (q.status === "on") {
     label = "Your share now";
     amount = q.share_cents;

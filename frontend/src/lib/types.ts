@@ -47,6 +47,7 @@ export type QuestCard = {
   headcount: number;
   standby_count: number;
   hold_cents: number;
+  hold_fee_cents: number;
   share_cents: number;
   lowest_cents: number;
   currency: string;
@@ -164,6 +165,7 @@ export type AppConfig = {
   ai: "claude" | "offline";
   model: string | null;
   mcp_url: string;
+  demo_reset: string | null;
 };
 
 export type Draft = {

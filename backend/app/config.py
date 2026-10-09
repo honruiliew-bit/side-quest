@@ -47,6 +47,8 @@ class Settings:
     chat_per_minute: int = int(os.getenv("CHAT_PER_MINUTE", "8"))
     # Hours after the trip ends before the host is paid, so members can report a problem first.
     payout_hold_hours: int = int(os.getenv("PAYOUT_HOLD_HOURS", "24"))
+    # Demo mode only: reset the demo data once a night at this hour, New York time. -1 turns it off.
+    demo_reset_hour: int = int(os.getenv("DEMO_RESET_HOUR", "4"))
 
     # Money
     currency: str = os.getenv("CURRENCY", "USD")

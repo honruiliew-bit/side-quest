@@ -9,7 +9,7 @@ from .models import Case, LedgerEntry, Message, Proposal, Quest, Receipt, User, 
 from .engine import current_share, headcount, payout_blocker, payout_due_at, quest_hold, receipt_out, seated, standby
 from .config import settings
 from .paypal.gateway import paypal_mode
-from .pricing import quest_price, quest_price_table, totals
+from .pricing import quest_fee, quest_price, quest_price_table, totals
 
 STAGE = {"open": 1, "on": 2, "locked": 3, "completed": 4, "cancelled": 0}
 
@@ -47,6 +47,7 @@ def quest_card(q: Quest) -> dict:
         "headcount": len(people),
         "standby_count": len(standby(q)),
         "hold_cents": quest_hold(q),
+        "hold_fee_cents": quest_fee(q, q.min_people),
         "share_cents": current_share(q),
         "lowest_cents": quest_price(q, q.max_people),
         "currency": q.currency,

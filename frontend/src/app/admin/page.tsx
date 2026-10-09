@@ -78,6 +78,9 @@ export default function Admin() {
           <div className="max-w-[560px]">
             <h1 className="display text-[52px] sm:text-[68px]">Admin</h1>
             <p className="mt-3 text-[17px]">Reports, payments and fees. Hosts never decide their own reports. Every decision here is logged.</p>
+            {config?.demo_reset && (
+              <p className="mt-2 text-[14px] font-semibold">Demo: try anything. Everything here resets every night at {config.demo_reset}.</p>
+            )}
           </div>
           {t && (
             <div className="grid grid-cols-3 gap-3">

@@ -142,6 +142,13 @@ def _desc(quest: Quest) -> str:
     return f"{quest.code} {quest.title}. Hold only, charged if the quest runs."
 
 
+def hold_lines(quest: Quest) -> list[tuple[str, int]]:
+    """What the hold is made of, itemized on PayPal's approval page."""
+    fee = quest_fee(quest, quest.min_people)
+    return [(f"{quest.code} trip share, {quest.min_people}-person price (the most you pay)", quest_hold(quest) - fee),
+            ("Sidequest booking fee", fee)]
+
+
 # ----------------------------------------------------------------------------
 # Joining
 # ----------------------------------------------------------------------------
@@ -172,6 +179,7 @@ def start_hold(db: Session, quest: Quest, user: User) -> tuple[Membership, str, 
             hold, quest.currency, ref=m.id, description=_desc(quest),
             return_url=f"{settings.frontend_url}/paypal/return?m={m.id}",
             cancel_url=f"{settings.frontend_url}/q/{quest.id}?hold=cancelled",
+            lines=hold_lines(quest),
         )
     except PayPalError as exc:
         m.status = "failed"
@@ -245,7 +253,8 @@ def simulate_join(db: Session, quest: Quest, user: User) -> Membership:
     db.add(m)
     db.flush()
     try:
-        auth = _gateway(m).card_authorization(hold, quest.currency, ref=m.id, description=_desc(quest))
+        auth = _gateway(m).card_authorization(hold, quest.currency, ref=m.id, description=_desc(quest),
+                                              lines=hold_lines(quest))
     except PayPalError:
         m.provider = "sim"
         auth = gateway_for("sim").card_authorization(hold, quest.currency, ref=m.id, description=_desc(quest))

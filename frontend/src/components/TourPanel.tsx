@@ -1,5 +1,6 @@
 "use client";
 
+import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import { api } from "@/lib/api";
 import { money } from "@/lib/format";
@@ -35,6 +36,7 @@ function scrollTo(id: string) {
  *  Docked at the bottom so it never covers the ticket or the PayPal button. */
 export function TourPanel({ q, onChange }: { q: QuestDetail; onChange: (q: QuestDetail) => void }) {
   const { user, config, signInAs, toast } = useSession();
+  const router = useRouter();
   const [open, setOpen] = useState(true);
   const [list, setList] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -217,9 +219,28 @@ export function TourPanel({ q, onChange }: { q: QuestDetail; onChange: (q: Quest
           ) : (
             <div className="flex flex-col gap-3 px-4 py-3 sm:flex-row sm:items-center">
               <p className="flex-1 text-[14px] leading-snug">
-                <strong>That's the whole thing.</strong> A hold, a charge at the real split, a refund for a dropout, invoices from a receipt and a payout. Every step is in the money log.
+                <strong>That's the whole thing.</strong> A hold, a charge at the real split, a refund for a dropout, invoices from a receipt and a payout.
+                <span className="block text-muted">When something goes wrong, Sidequest staff decide, not the host. See how a report is handled.</span>
               </p>
-              <button className="btn btn-ghost shrink-0" onClick={() => scrollTo("ledger-h")}>See the money log</button>
+              <div className="flex shrink-0 flex-wrap gap-2">
+                <button className="btn btn-ghost" onClick={() => scrollTo("ledger-h")}>Money log</button>
+                <button
+                  className="btn btn-ink"
+                  disabled={busy}
+                  onClick={async () => {
+                    setBusy(true);
+                    try {
+                      await signInAs("kai");
+                      toast("You're now Kai, a Sidequest admin.");
+                      router.push("/admin#cases");
+                    } finally {
+                      setBusy(false);
+                    }
+                  }}
+                >
+                  See how disputes are handled
+                </button>
+              </div>
             </div>
           )}
         </section>

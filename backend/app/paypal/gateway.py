@@ -97,6 +97,24 @@ def estimate_refund_fee_back(cents: int) -> int:
     return cents * settings.paypal_fee_bps // 10_000
 
 
+Lines = list[tuple[str, int]]
+
+
+def purchase_unit(cents: int, currency: str, ref: str, description: str, lines: Lines | None = None) -> dict:
+    """One purchase unit. With lines, PayPal shows each one on its approval page (for example the trip share
+    and Sidequest's booking fee). Lines are only sent when they add up to the total, which PayPal requires."""
+    unit: dict[str, Any] = {
+        "reference_id": ref, "custom_id": ref, "description": description[:127],
+        "amount": {"currency_code": currency, "value": to_value(cents)},
+    }
+    lines = [(name, c) for name, c in (lines or []) if c > 0]
+    if lines and sum(c for _, c in lines) == cents:
+        unit["items"] = [{"name": name[:127], "quantity": "1",
+                          "unit_amount": {"currency_code": currency, "value": to_value(c)}} for name, c in lines]
+        unit["amount"]["breakdown"] = {"item_total": {"currency_code": currency, "value": to_value(cents)}}
+    return unit
+
+
 def _paypal_id(n: int = 17) -> str:
     alphabet = string.ascii_uppercase + string.digits
     return "".join(secrets.choice(alphabet) for _ in range(n))
@@ -117,11 +135,13 @@ class MockGateway:
     name = "mock"
 
     def create_order(self, cents: int, currency: str, ref: str, description: str,
-                     return_url: str, cancel_url: str) -> OrderResult:
+                     return_url: str, cancel_url: str, lines: Lines | None = None) -> OrderResult:
         order_id = _paypal_id()
         approve = f"{settings.frontend_url}/paypal/mock-approve?token={order_id}"
+        unit = purchase_unit(cents, currency, ref, description, lines)
         return OrderResult(order_id, approve, "PAYER_ACTION_REQUIRED",
-                           {"id": order_id, "intent": "AUTHORIZE", "amount": to_value(cents), "mock": True})
+                           {"id": order_id, "intent": "AUTHORIZE", "amount": to_value(cents), "mock": True,
+                            "purchase_units": [unit]})
 
     def authorize_order(self, order_id: str) -> AuthResult:
         auth_id = _paypal_id()
@@ -129,7 +149,8 @@ class MockGateway:
         return AuthResult(order_id, auth_id, "CREATED", expires, "paypal",
                           {"id": order_id, "status": "COMPLETED", "authorization": auth_id, "mock": True})
 
-    def card_authorization(self, cents: int, currency: str, ref: str, description: str) -> AuthResult:
+    def card_authorization(self, cents: int, currency: str, ref: str, description: str,
+                           lines: Lines | None = None) -> AuthResult:
         order_id = _paypal_id()
         return self.authorize_order(order_id)
 
@@ -234,16 +255,10 @@ class SandboxGateway:
 
     # Orders v2 ----------------------------------------------------------
     def create_order(self, cents: int, currency: str, ref: str, description: str,
-                     return_url: str, cancel_url: str) -> OrderResult:
+                     return_url: str, cancel_url: str, lines: Lines | None = None) -> OrderResult:
         body = self._request("POST", "/v2/checkout/orders", {
             "intent": "AUTHORIZE",
-            "purchase_units": [{
-                "reference_id": ref,
-                "custom_id": ref,
-                "description": description[:127],
-                "soft_descriptor": "SIDEQUEST",
-                "amount": {"currency_code": currency, "value": to_value(cents)},
-            }],
+            "purchase_units": [{**purchase_unit(cents, currency, ref, description, lines), "soft_descriptor": "SIDEQUEST"}],
             "payment_source": {"paypal": {"experience_context": {
                 "brand_name": settings.paypal_brand_name,
                 "shipping_preference": "NO_SHIPPING",
@@ -273,15 +288,13 @@ class SandboxGateway:
                              request_id=f"authorize-{order_id}")
         return self._auth_from_order(body)
 
-    def card_authorization(self, cents: int, currency: str, ref: str, description: str) -> AuthResult:
+    def card_authorization(self, cents: int, currency: str, ref: str, description: str,
+                           lines: Lines | None = None) -> AuthResult:
         if not settings.demo_card_number:
             raise PayPalError("DEMO_CARD_NUMBER is not set.")
         body = self._request("POST", "/v2/checkout/orders", {
             "intent": "AUTHORIZE",
-            "purchase_units": [{
-                "reference_id": ref, "custom_id": ref, "description": description[:127],
-                "amount": {"currency_code": currency, "value": to_value(cents)},
-            }],
+            "purchase_units": [purchase_unit(cents, currency, ref, description, lines)],
             "payment_source": {"card": {
                 "name": "Demo Member",
                 "number": settings.demo_card_number,

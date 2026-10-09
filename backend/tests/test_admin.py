@@ -13,6 +13,7 @@ if DB.exists():
 os.environ.update({
     "DATABASE_URL": f"sqlite:///{DB}",
     "PAYPAL_MODE": "mock",
+    "DEMO_RESET_HOUR": "-1",  # never reset mid-test; test_admin covers the reset itself
     "ANTHROPIC_API_KEY": "",
     "DEMO_MODE": "1",
     "SEED_ON_START": "1",
@@ -220,3 +221,42 @@ def test_split_a_credit_across_everyone_who_went(client):
     # Runs after the fee-change test, so read the quest's own fees from the books.
     assert m["refunded_cents"] == 8000
     assert m["paid_out_cents"] == m["gross_cents"] - 8000 - m["booking_fees_cents"] - m["host_fee_cents"]
+
+
+def test_paypal_order_itemizes_the_booking_fee():
+    from app.paypal.gateway import purchase_unit
+
+    unit = purchase_unit(8636, "USD", "m_1", "HV-0417 hold", [("Trip share", 8100), ("Sidequest booking fee", 536)])
+    assert [i["name"] for i in unit["items"]] == ["Trip share", "Sidequest booking fee"]
+    assert unit["amount"]["breakdown"]["item_total"]["value"] == "86.36"
+    # Lines that don't add up to the total are left off rather than sent to PayPal and rejected.
+    assert "items" not in purchase_unit(8636, "USD", "m_1", "x", [("Trip share", 8100)])
+
+
+def test_ask_claude_is_rate_limited(client):
+    kai = login(client, "kai")
+    open_case = next(c for c in client.get("/admin/cases", headers=kai).json() if c["status"] == "open")
+    codes = [client.post(f"/admin/cases/{open_case['id']}/review", headers=kai).status_code for _ in range(6)]
+    assert 429 in codes and codes[0] == 200
+
+
+def test_nightly_demo_reset(client, monkeypatch):
+    """Runs last: it wipes and reseeds the demo data."""
+    from dataclasses import replace
+    from datetime import datetime, timezone
+
+    from app import demo
+
+    kai = login(client, "kai")
+    client.post("/admin/fees", headers=kai, json={"booking_bps": 2000, "booking_fixed_cents": 500, "host_bps": 2000,
+                                                   "reason": "A judge playing with the fees"})
+    four_am = datetime(2026, 10, 10, 8, 5, tzinfo=timezone.utc)  # 4:05 am in New York
+    monkeypatch.setattr(demo, "settings", replace(demo.settings, demo_reset_hour=4))
+    assert not demo.due(datetime(2026, 10, 10, 15, 0, tzinfo=timezone.utc))  # wrong hour
+    assert demo.due(four_am)
+    monkeypatch.setattr(demo, "utcnow", lambda: four_am)
+    assert demo.maybe_reset() is True
+    assert demo.maybe_reset() is False  # once a night
+    fees = client.get("/admin/fees", headers=login(client, "kai")).json()
+    assert fees["current"]["booking_bps"] == 600
+    assert client.get("/config").json()["demo_reset"] == "4:00 am ET"  # shown on the admin page

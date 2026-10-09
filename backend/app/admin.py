@@ -17,6 +17,20 @@ from .views import iso, ledger_out, membership_out, user_out
 
 router = APIRouter(prefix="/admin")
 
+# Each "Ask Claude" is a paid model call, and the demo admin is open to anyone. Keep it to a few a minute.
+REVIEWS_PER_MINUTE = 4
+_reviews: dict[str, list[float]] = {}
+
+
+def _limit_reviews(user_id: str) -> None:
+    import time
+
+    now = time.monotonic()
+    recent = [t for t in _reviews.get(user_id, []) if now - t < 60]
+    if len(recent) >= REVIEWS_PER_MINUTE:
+        raise HTTPException(429, "Claude has reviewed a few cases in the last minute. Try again shortly.")
+    _reviews[user_id] = recent + [now]
+
 
 def require_admin(user: User = Depends(require_user)) -> User:
     if not user.is_admin:
@@ -105,6 +119,9 @@ def review_case(case_id: str, admin: User = Depends(require_admin), db: Session 
     from .agent import mediator
 
     c = _case(db, case_id)
+    if c.status != "open":
+        raise HTTPException(409, "This case is already decided.")
+    _limit_reviews(admin.id)
     try:
         c.ai_review = mediator.review(db, c)
     except Exception as exc:  # the AI being down shouldn't block the admin
