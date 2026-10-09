@@ -256,6 +256,7 @@ def test_invoice_paid_webhook_and_studio_proxy(client):
     hon = login(client, "hon")
     with session_scope() as db:
         q = db.query(Quest).filter(Quest.line_code == "MT").first()
+        q_id = q.id
         sam = next(m for m in q.memberships if m.user.persona == "sam")
         inv = Invoice(quest_id=q.id, user_id=sam.user_id, membership_id=sam.id, paypal_id="INV2-TEST-PAID-0001",
                       cents=1100, item="test")
@@ -267,8 +268,9 @@ def test_invoice_paid_webhook_and_studio_proxy(client):
     assert client.post("/webhooks/paypal", json=event).json()["status"] == "paid"
     assert client.post("/webhooks/paypal", json=event).json()["status"] == "duplicate"
     books = client.get("/me/books", headers=hon).json()
-    paid = [r for r in books["ledger"] if r["paypal_id"] == "INV2-TEST-PAID-0001" and r["event"] == "Invoice paid"]
-    assert len(paid) == 1 and paid[0]["confirmed"] == "Yes"
+    paid = [r for r in books["ledger"] if r["quest_id"] == q_id and r["person"] == "Sam" and r["event"] == "Invoice paid"
+            and r["confirmed"] == "Yes"]
+    assert len(paid) == 1 and "paypal_id" not in paid[0]  # hosts see the event, not PayPal's id
 
     # With no Anthropic key the proxy answers in plain words instead of failing.
     r = client.post("/studio/llm", headers=hon, json={"messages": [{"role": "user", "content": "hi"}]})

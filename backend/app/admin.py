@@ -38,7 +38,7 @@ def payments(include_tours: bool = False, admin: User = Depends(require_admin), 
         stmt = stmt.where(Quest.tour.isnot(True))
     rows = db.execute(stmt.order_by(LedgerEntry.created_at.desc()).limit(3000)).all()
     return [{
-        **ledger_out(e),
+        **ledger_out(e, staff=True),
         "quest": {"id": q.id, "code": q.code, "title": q.title, "line_code": q.line_code, "tz": q.tz,
                   "host": q.host.name, "tour": bool(q.tour)},
         "fee_cents": e.fee_cents or 0, "fee_source": e.fee_source,
@@ -86,8 +86,8 @@ def _case_detail(db: Session, c: Case) -> dict:
         "money": fees.quest_money(q, entries).out(),
         "host_paid": any(m.user_id == q.host_id and m.charged_cents for m in q.memberships),
         "payout_due_at": iso(engine.payout_due_at(q)),
-        "members": [membership_out(m) for m in q.memberships if m.charged_cents or m.status in {"held", "standby"}],
-        "ledger": [ledger_out(e) for e in reversed(entries)],
+        "members": [membership_out(m, staff=True) for m in q.memberships if m.charged_cents or m.status in {"held", "standby"}],
+        "ledger": [ledger_out(e, staff=True) for e in reversed(entries)],
         "receipts": [engine.receipt_out(r) for r in receipts],
         "chat": [{"id": m.id, "role": m.role, "body": m.body, "user": user_out(m.user), "created_at": iso(m.created_at)}
                  for m in reversed(chat)],

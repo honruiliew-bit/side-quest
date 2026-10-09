@@ -48,7 +48,7 @@ Open the [live demo](https://sidequest-web-q5pq.onrender.com) and click **Take t
 | 4. Settle up from a receipt | Hon | Claude reads the gas receipt. Each person gets a PayPal invoice for their share, with the receipt linked. |
 | 5. The host gets paid | anyone | A PayPal payout to the host. In real use it waits 24 hours after the trip. |
 
-The sandbox buyer login is shown in step 1. The **money log** on the quest page lists every PayPal call with its ID.
+The sandbox buyer login is shown in step 1. The **money log** on the quest page lists every hold, charge, refund and payout. PayPal API names and object IDs are staff-only: switch to Kai to see them.
 
 Then try:
 - **My money** as Hon: the host desk. Press **Nudge** on Leo, or **Edit with Claude** and **Nudge the oldest invoice**.
@@ -95,7 +95,7 @@ Then try:
 
 Hosts get a dashboard on **My money**, built with [AG Studio](https://www.ag-grid.com/studio/) and themed to match the app.
 
-- Net charged, paid out, still owed and collected by invoice, charges by quest, invoices by status, a weekly trend and a grid of every PayPal call. Everything cross-filters.
+- Net charged, paid out, still owed and collected by invoice, charges by quest, invoices by status, a weekly trend and a grid of every payment. Everything cross-filters.
 - **Who still owes**, a custom widget: open PayPal invoices ranked by amount, days open and nudges sent. **Nudge** opens a reminder the host can edit before PayPal sends it. At most 3 per person, 12 hours apart.
 - **Edit with Claude**: AG Studio's five built-in agents run on Claude through the API (`POST /studio/llm`), so the key never reaches the browser. One extra tool, `draft_payment_reminder`, lets Claude write a nudge. Only the host can send it.
 - On a phone, the desk becomes a simple "Who still owes" list.
@@ -178,6 +178,7 @@ On a $75 share the member approves $80.00. PayPal takes about $3.34 (3.49% + $0.
 - **Each approval runs once.** Proposals are claimed atomically, and duplicates collapse into one card.
 - **No double billing.** Invoice numbers are deterministic, so a retried send finds the invoice it already sent instead of billing again.
 - **Holds fit PayPal's window.** Join deadlines must be within 28 days, because authorizations last 29.
+- **PayPal IDs are staff-only.** Members and hosts see what happened to their money, never PayPal order, capture or invoice IDs. The API leaves them out of the response, not just the screen.
 - **Hosts never judge their own case.** Only an admin can resolve a report, and every decision is written to an audit log the app gives no way to edit.
 - **Fees can't change after you commit.** Each quest stores the fee terms it was posted with.
 - **The books are checked against PayPal.** Reconciliation compares every capture, refund, payout and invoice with PayPal's record.

@@ -38,7 +38,7 @@ export function buildStudioData(books: Books): AgDataSourcesDefinition<Sidequest
       {
         id: "ledger",
         name: "PayPal events",
-        description: "One row per PayPal call: hold, capture, void, refund, invoice, invoice paid, payout.",
+        description: "One row per money event: hold, charge, release, refund, invoice, invoice paid, payout.",
         data: ledger,
         fields: [
           { id: "id", name: "Event ID", format: "textFormat", hide: true },
@@ -51,8 +51,6 @@ export function buildStudioData(books: Books): AgDataSourcesDefinition<Sidequest
           { id: "net", name: "Net charged", format: "currencyFormat", description: "Captures minus refunds." },
           { id: "paid_out", name: "Paid out", format: "currencyFormat", description: "PayPal Payouts to the host." },
           { id: "collected", name: "Collected by invoice", format: "currencyFormat" },
-          { id: "api", name: "PayPal API", format: "textFormat" },
-          { id: "paypal_id", name: "PayPal ID", format: "textFormat" },
           { id: "source", name: "Source", format: "textFormat" },
           { id: "confirmed", name: "Webhook confirmed", format: "textFormat" },
         ],
@@ -72,7 +70,6 @@ export function buildStudioData(books: Books): AgDataSourcesDefinition<Sidequest
           { id: "sent_at", name: "Sent", format: "dateTimeFormat" },
           { id: "days_open", name: "Days open", format: "integerFormat" },
           { id: "reminders", name: "Reminders", format: "integerFormat" },
-          { id: "paypal_id", name: "PayPal invoice ID", format: "textFormat" },
           { id: "source", name: "Source", format: "textFormat", hide: true },
         ],
       },

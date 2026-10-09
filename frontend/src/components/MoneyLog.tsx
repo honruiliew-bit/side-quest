@@ -15,9 +15,10 @@ export function MoneyLog({ q }: { q: QuestDetail }) {
     <section aria-labelledby="ledger-h" className="flex flex-col gap-3">
       <div className="flex flex-wrap items-baseline justify-between gap-3">
         <h2 id="ledger-h" className="h2">Money log</h2>
-        <span className="text-[14px] text-muted">Every PayPal call behind this quest</span>
+        <span className="text-[14px] text-muted">Every hold, charge, refund and payout on this quest</span>
       </div>
-      <LedgerGrid rows={q.ledger} paypalMode={q.paypal_mode} tz={q.tz} fileName={`sidequest-${q.line_code}-money-log`} />
+      <LedgerGrid rows={q.ledger} paypalMode={q.paypal_mode} tz={q.tz} fileName={`sidequest-${q.line_code}-money-log`}
+        staff={q.viewer.is_admin} />
     </section>
   );
 }

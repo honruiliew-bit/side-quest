@@ -95,7 +95,7 @@ export function NudgeBoard(params: AgWidgetParams<NudgeBoardWidget, unknown, Des
                 >
                   Nudge
                 </button>
-              ) : due && due.source === "Sandbox" ? (
+              ) : due && due.source === "Sandbox" && due.paypal_id ? (
                 <a
                   className="border-2 border-ink px-2 py-1 text-[12px] font-bold no-underline hover:bg-white"
                   href={`https://www.sandbox.paypal.com/invoice/p/#${due.paypal_id}`}

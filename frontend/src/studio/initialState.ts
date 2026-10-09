@@ -66,11 +66,11 @@ export const initialState: AgReportState<SidequestRegistry> = {
         },
         events: {
           type: "grid",
-          format: title("Every PayPal call"),
+          format: title("Every payment"),
           dataMapping: {
             cols: [
               { id: "ledger.at" }, { id: "quests.title" }, { id: "ledger.person" }, { id: "ledger.event" },
-              { id: "ledger.amount" }, { id: "ledger.api" }, { id: "ledger.paypal_id" }, { id: "ledger.source" },
+              { id: "ledger.amount" }, { id: "ledger.source" },
             ],
           },
           sort: [{ field: { id: "ledger.at" }, direction: "desc" }],

@@ -20,16 +20,16 @@ const TOOL_LABEL: Record<string, string> = {
 };
 
 function opLine(a: ProposalAction, locked: boolean): string {
-  // Plain words first, the PayPal call in brackets for anyone checking.
+  // Plain words first. Admins also see the PayPal object each step acts on.
   switch (a.type) {
     case "void_hold":
-      return `Release ${a.name}'s ${money(a.cents)} hold. They pay nothing. (PayPal void ${a.ref ?? ""})`;
+      return `Release ${a.name}'s ${money(a.cents)} hold. They pay nothing.${a.ref ? ` (PayPal void ${a.ref})` : ""}`;
     case "promote":
       return locked
-        ? `Charge ${a.name} ${money(a.cents)} from their standby hold. (PayPal capture ${a.ref ?? ""})`
+        ? `Charge ${a.name} ${money(a.cents)} from their standby hold.${a.ref ? ` (PayPal capture ${a.ref})` : ""}`
         : `Move ${a.name} from standby into a seat. Their hold stays.`;
     case "refund":
-      return `Refund ${a.name} ${money(a.cents)}. (PayPal refund ${a.ref ?? ""})`;
+      return `Refund ${a.name} ${money(a.cents)}.${a.ref ? ` (PayPal refund ${a.ref})` : ""}`;
     case "invoice":
       return `Send ${a.name} a PayPal invoice for ${money(a.cents)}, receipts linked. (Agent Toolkit)`;
   }

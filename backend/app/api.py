@@ -165,7 +165,7 @@ def my_ledger(user: User = Depends(require_user), db: Session = Depends(get_db))
         .limit(2000)
     ).all()
     return [{
-        **ledger_out(e),
+        **ledger_out(e, bool(user.is_admin)),
         "quest": {"id": q.id, "title": q.title, "line_code": q.line_code, "tz": q.tz,
                   "role": "host" if q.host_id == user.id else "member", "tour": bool(q.tour)},
         "simulated": e.provider == "sim",

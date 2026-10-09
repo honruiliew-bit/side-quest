@@ -75,7 +75,7 @@ export function MoneyRoute({ q }: { q: QuestDetail }) {
                 />
                 <span className="text-[16px] font-bold">{s.title}</span>
                 <span className="tab max-w-[24ch] text-[14px] text-muted">{s.detail}</span>
-                <span className="text-[12px] font-semibold text-money/80">{s.api}</span>
+                {q.viewer.is_admin && <span className="text-[12px] font-semibold text-money/80">{s.api}</span>}
               </li>
             );
           })}

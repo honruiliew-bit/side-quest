@@ -24,7 +24,7 @@ Judging weighs presentation equally with the other four criteria, and Best Demo 
 
 **Visual:** Switch to Hon. Lock and charge. Money route reaches Everyone charged. Scroll the money log, click the Charges filter, then cut to the host desk on My money for one second.
 
-**Voice:** "When the host locks, PayPal captures each hold at the final split. Never more than anyone approved. Every call is in the log with its PayPal ID, and webhooks confirm each one. Hosts get the whole book, exportable."
+**Voice:** "When the host locks, PayPal captures each hold at the final split. Never more than anyone approved. Every step is in the money log, and webhooks confirm each one. Staff see the PayPal ID behind every line. Hosts get the whole book, exportable."
 
 ## 1:25 to 2:05. The agent
 

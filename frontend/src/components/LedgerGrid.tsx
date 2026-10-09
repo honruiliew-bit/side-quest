@@ -115,6 +115,7 @@ export function LedgerGrid({
   showQuest = false,
   fileName,
   pageSize = 10,
+  staff = false,
 }: {
   rows: LedgerRow[];
   paypalMode: string;
@@ -122,6 +123,7 @@ export function LedgerGrid({
   showQuest?: boolean;
   fileName: string;
   pageSize?: number;
+  staff?: boolean;
 }) {
   const apiRef = useRef<GridApi<Row> | null>(null);
   const [search, setSearch] = useState("");
@@ -183,19 +185,6 @@ export function LedgerGrid({
         width: 130,
       },
       {
-        colId: "api",
-        headerName: "PayPal API",
-        valueGetter: (p) => (p.data && !p.data.pinned ? API[p.data.kind] : ""),
-        width: 190,
-      },
-      {
-        colId: "ref",
-        headerName: "PayPal ID",
-        valueGetter: (p) => p.data?.ref ?? "",
-        cellClass: "font-mono text-[13px]",
-        width: 200,
-      },
-      {
         colId: "source",
         headerName: "Source",
         valueGetter: (p) => (p.data && !p.data.pinned ? source(p.data, paypalMode) + (p.data.confirmed ? ", webhook confirmed" : "") : ""),
@@ -203,6 +192,27 @@ export function LedgerGrid({
         width: 170,
       },
     ];
+    // PayPal's API names and object ids are for Sidequest staff. Everyone else sees what happened, not the plumbing.
+    if (staff) {
+      const at = cols.findIndex((c) => c.colId === "source");
+      cols.splice(
+        at,
+        0,
+        {
+          colId: "api",
+          headerName: "PayPal API",
+          valueGetter: (p) => (p.data && !p.data.pinned ? API[p.data.kind] : ""),
+          width: 190,
+        },
+        {
+          colId: "ref",
+          headerName: "PayPal ID",
+          valueGetter: (p) => p.data?.ref ?? "",
+          cellClass: "font-mono text-[13px]",
+          width: 200,
+        },
+      );
+    }
     if (showQuest) {
       cols.splice(1, 0, {
         colId: "quest",
@@ -214,7 +224,7 @@ export function LedgerGrid({
       });
     }
     return cols;
-  }, [paypalMode, showQuest, tz, SourceCell]);
+  }, [paypalMode, showQuest, tz, SourceCell, staff]);
 
   const refreshTotal = useCallback(() => {
     const api = apiRef.current;
@@ -277,7 +287,7 @@ export function LedgerGrid({
               type="search"
               value={search}
               onChange={(e) => setSearch(e.target.value)}
-              placeholder="Search name, ID, note"
+              placeholder={staff ? "Search name, ID, note" : "Search name or note"}
               className="field text-[15px]"
               style={{ minHeight: 40, height: 40 }}
             />

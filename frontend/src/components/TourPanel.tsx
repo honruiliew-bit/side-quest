@@ -217,7 +217,7 @@ export function TourPanel({ q, onChange }: { q: QuestDetail; onChange: (q: Quest
           ) : (
             <div className="flex flex-col gap-3 px-4 py-3 sm:flex-row sm:items-center">
               <p className="flex-1 text-[14px] leading-snug">
-                <strong>That's the whole thing.</strong> A hold, a charge at the real split, a refund for a dropout, invoices from a receipt and a payout. Every step is in the money log with its PayPal ID.
+                <strong>That's the whole thing.</strong> A hold, a charge at the real split, a refund for a dropout, invoices from a receipt and a payout. Every step is in the money log.
               </p>
               <button className="btn btn-ghost shrink-0" onClick={() => scrollTo("ledger-h")}>See the money log</button>
             </div>

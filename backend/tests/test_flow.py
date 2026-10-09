@@ -163,7 +163,9 @@ def test_deadline_without_enough_people_releases_everyone(client):
 
 def test_webhook_confirms_ledger(client):
     hv = quest_by_code(client, "BK")
-    d = client.get(f"/quests/{hv['id']}").json()
+    # PayPal ids are staff only: a guest or member sees the event but not the id.
+    assert all(e["ref"] is None for e in client.get(f"/quests/{hv['id']}").json()["ledger"])
+    d = client.get(f"/quests/{hv['id']}", headers=login(client, "kai")).json()
     entry = [e for e in d["ledger"] if e["kind"] == "hold"][0]
     event = {"id": "WH-1", "event_type": "PAYMENT.AUTHORIZATION.CREATED", "resource": {"id": entry["ref"]}}
     assert client.post("/webhooks/paypal", json=event).json()["status"] == "confirmed"

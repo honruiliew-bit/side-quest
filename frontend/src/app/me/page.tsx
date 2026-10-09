@@ -165,14 +165,14 @@ export default function MyMoney() {
           <section className="flex flex-col gap-4" aria-labelledby="activity-h">
             <div className="flex flex-wrap items-baseline justify-between gap-3">
               <h2 id="activity-h" className="h2">Your PayPal activity</h2>
-              <span className="text-[14px] text-muted">Every hold, charge and refund, with its PayPal ID</span>
+              <span className="text-[14px] text-muted">Every hold, charge and refund on your quests</span>
             </div>
             {ledger === null ? (
               <div className="h-[240px] border-2 border-ink bg-stock" aria-busy="true" />
             ) : ledger.length === 0 ? (
               <p className="panel p-5 text-[15px]">No PayPal activity yet.</p>
             ) : (
-              <LedgerGrid rows={ledger} paypalMode={config?.paypal_mode ?? "mock"} showQuest fileName={`sidequest-${user.name.toLowerCase()}`} />
+              <LedgerGrid rows={ledger} paypalMode={config?.paypal_mode ?? "mock"} showQuest fileName={`sidequest-${user.name.toLowerCase()}`} staff={!!user.is_admin} />
             )}
             {config?.demo_mode && (
               <div className="panel flex flex-wrap items-center justify-between gap-4 p-5">

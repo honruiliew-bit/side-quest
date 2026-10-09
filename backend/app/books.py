@@ -25,11 +25,6 @@ EVENT = {
     "payout": "Paid out to host", "invoice": "Invoice sent", "invoice_paid": "Invoice paid",
     "reauthorize": "Hold renewed", "decline": "Declined",
 }
-API = {
-    "hold": "Orders v2 authorize", "release": "Void authorization", "charge": "Capture authorization",
-    "refund": "Refund capture", "payout": "Payouts v1", "invoice": "Agent Toolkit invoice",
-    "invoice_paid": "Invoicing", "reauthorize": "Reauthorize", "decline": "PayPal error",
-}
 SEATED = {"held", "charged", "refunded"}
 
 
@@ -81,7 +76,7 @@ def books(user: User = Depends(require_user), db: Session = Depends(get_db)):
             "event": EVENT.get(e.kind, e.kind), "kind": e.kind,
             # Money in, positive. Refunds go back out, negative. Holds and invoices are shown at face value.
             "amount": -_dollars(e.cents) if e.kind == "refund" else _dollars(e.cents),
-            "api": API.get(e.kind, ""), "paypal_id": e.paypal_ref or "", "source": _source(e.provider),
+            "source": _source(e.provider),
             "confirmed": "Yes" if e.confirmed else "No", "at": aware(e.created_at).isoformat(),
         } for e in ledger if mine(e.quest_id, e.user_id)],
         "dues": [{
@@ -89,7 +84,9 @@ def books(user: User = Depends(require_user), db: Session = Depends(get_db)):
             "status": {"sent": "Open", "paid": "Paid", "cancelled": "Cancelled"}[i.status],
             "item": i.item, "sent_at": aware(i.created_at).isoformat(),
             "days_open": max(0, ((aware(i.paid_at) if i.paid_at else now) - aware(i.created_at)).days),
-            "reminders": i.reminders, "paypal_id": i.paypal_id, "source": _source(i.provider),
+            # The PayPal id is only sent to the person who owes it, so they can open the invoice and pay.
+            "reminders": i.reminders, "paypal_id": i.paypal_id if i.user_id == user.id else "",
+            "source": _source(i.provider),
             "can_remind": i.quest_id in hosting and i.status == "sent" and i.reminders < engine.MAX_REMINDERS,
         } for i in invoices if mine(i.quest_id, i.user_id)],
     }

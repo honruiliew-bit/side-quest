@@ -3,8 +3,8 @@ export type BooksQuest = {
   starts_at: string; travelers: number; min_people: number;
 };
 export type BooksLedger = {
-  id: string; quest_id: string; person: string; event: string; kind: string; amount: number; api: string;
-  paypal_id: string; source: string; confirmed: "Yes" | "No"; at: string;
+  id: string; quest_id: string; person: string; event: string; kind: string; amount: number;
+  source: string; confirmed: "Yes" | "No"; at: string;
 };
 export type BooksDue = {
   id: string; quest_id: string; person: string; amount: number; status: "Open" | "Paid" | "Cancelled"; item: string;

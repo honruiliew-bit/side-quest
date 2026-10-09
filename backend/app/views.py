@@ -56,7 +56,8 @@ def quest_card(q: Quest) -> dict:
     }
 
 
-def membership_out(m) -> dict:
+def membership_out(m, staff: bool = False) -> dict:
+    """PayPal object ids are for Sidequest staff only. Members and hosts see what happened, not the plumbing."""
     return {
         "id": m.id,
         "user": user_out(m.user),
@@ -67,28 +68,30 @@ def membership_out(m) -> dict:
         "hold_cents": m.hold_cents,
         "charged_cents": m.charged_cents,
         "refunded_cents": m.refunded_cents,
-        "order_id": m.order_id,
-        "authorization_id": m.authorization_id,
-        "capture_id": m.capture_id,
+        "order_id": m.order_id if staff else None,
+        "authorization_id": m.authorization_id if staff else None,
+        "capture_id": m.capture_id if staff else None,
         "created_at": iso(m.created_at),
     }
 
 
-def ledger_out(e: LedgerEntry) -> dict:
+def ledger_out(e: LedgerEntry, staff: bool = False) -> dict:
     return {
-        "id": e.id, "kind": e.kind, "cents": e.cents, "ref": e.paypal_ref, "provider": e.provider,
+        "id": e.id, "kind": e.kind, "cents": e.cents, "ref": e.paypal_ref if staff else None, "provider": e.provider,
         "note": e.note, "confirmed": e.confirmed, "user": user_out(e.user), "created_at": iso(e.created_at),
     }
 
 
-def quest_detail(db: Session, q: Quest, viewer: User | None) -> dict:
+def quest_detail(db: Session, q: Quest, viewer: User | None, expose_ids: bool = False) -> dict:
+    """expose_ids: include PayPal object ids. True for admins, and for the quest agent working server side."""
+    staff = expose_ids or bool(viewer and viewer.is_admin)
     out = quest_card(q)
     people = seated(q)
     by_seat = {m.seat: m for m in people if m.seat}
     seats = []
     for n in range(1, q.max_people + 1):
         m = by_seat.get(n)
-        seats.append({"seat": n, "is_minimum": n == q.min_people, "member": membership_out(m) if m else None})
+        seats.append({"seat": n, "is_minimum": n == q.min_people, "member": membership_out(m, staff) if m else None})
     shared, each = totals(q.cost_lines)
 
     mine = None
@@ -98,7 +101,7 @@ def quest_detail(db: Session, q: Quest, viewer: User | None) -> dict:
             role = "host"
         for m in reversed(q.memberships):
             if m.user_id == viewer.id and m.status not in {"abandoned"}:
-                mine = membership_out(m)
+                mine = membership_out(m, staff)
                 if role != "host" and m.status in {"held", "standby", "charged", "pending"}:
                     role = "member"
                 break
@@ -136,16 +139,17 @@ def quest_detail(db: Session, q: Quest, viewer: User | None) -> dict:
         "itinerary": q.itinerary,
         "price_table": quest_price_table(q),
         "seats": seats,
-        "standby": [membership_out(m) for m in standby(q)],
+        "standby": [membership_out(m, staff) for m in standby(q)],
         "money": {"held_cents": held, "charged_cents": charged, "refunded_cents": refunded, "paid_out_cents": paid_out},
         "viewer": {"role": role, "membership": mine, "is_admin": bool(viewer and viewer.is_admin)},
-        "ledger": [ledger_out(e) for e in ledger],
+        "ledger": [ledger_out(e, staff) for e in ledger],
         "messages": [{
             "id": msg.id, "role": msg.role, "body": msg.body, "user": user_out(msg.user),
             "meta": msg.meta or {}, "created_at": iso(msg.created_at),
         } for msg in reversed(messages)],
         "proposals": [{
-            "id": p.id, "title": p.title, "rationale": p.rationale, "actions": p.actions,
+            "id": p.id, "title": p.title, "rationale": p.rationale,
+            "actions": p.actions if staff else [{k: v for k, v in a.items() if k != "ref"} for a in p.actions],
             "status": p.status, "result": p.result, "evidence": p.evidence or [], "created_at": iso(p.created_at),
         } for p in proposals],
         "receipts": [receipt_out(r) for r in db.scalars(
@@ -174,7 +178,7 @@ def quest_detail(db: Session, q: Quest, viewer: User | None) -> dict:
 
 def agent_state(db: Session, q: Quest, viewer: User | None) -> dict:
     """A compact view for the model. No PayPal ids it doesn't need."""
-    d = quest_detail(db, q, viewer)
+    d = quest_detail(db, q, viewer, expose_ids=True)
     return {
         "quest": {k: d[k] for k in ("code", "title", "area", "status", "starts_at", "ends_at", "join_by", "tz",
                                     "min_people", "max_people", "headcount", "hold_cents", "share_cents",

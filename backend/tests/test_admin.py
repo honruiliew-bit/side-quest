@@ -124,6 +124,8 @@ def test_full_refund_gives_the_fee_back_and_pays_nothing_out(client):
 
 def test_paypal_dispute_webhook_opens_a_case_and_admin_accepts_the_claim(client):
     qid, hon, d = locked_tour(client)
+    assert all(s["member"]["capture_id"] is None for s in d["seats"] if s["member"])  # not shown to the host
+    d = client.get(f"/quests/{qid}", headers=login(client, "kai")).json()
     priya = next(s["member"] for s in d["seats"] if s["member"] and s["member"]["user"]["name"] == "Priya")
     event = {"id": "WH-DISPUTE-1", "event_type": "CUSTOMER.DISPUTE.CREATED", "resource": {
         "dispute_id": "PP-D-TEST1", "reason": "MERCHANDISE_OR_SERVICE_NOT_RECEIVED", "status": "OPEN",
@@ -137,7 +139,7 @@ def test_paypal_dispute_webhook_opens_a_case_and_admin_accepts_the_claim(client)
     out = client.post(f"/admin/cases/{case['id']}/resolve", headers=kai,
                       json={"decision": "accept_claim", "note": "Priya couldn't board. Accepting on PayPal."}).json()
     assert out["status"] == "resolved" and out["paypal_status"] == "RESOLVED"
-    q = client.get(f"/quests/{qid}").json()
+    q = client.get(f"/quests/{qid}", headers=kai).json()
     assert not q["payout"]["paused_reason"]
     assert any(e["kind"] == "refund" and e["ref"] == "PP-D-TEST1" for e in q["ledger"])
 
