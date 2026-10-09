@@ -16,12 +16,12 @@ from pydantic import BaseModel, Field
 from sqlalchemy import or_, select
 from sqlalchemy.orm import Session
 
-from . import engine, seed as seeding
+from . import cases, engine, fees, seed as seeding
 from .agent import builder, keeper, shopper
-from .auth import PERSONAS, ensure_personas, get_or_create_user, issue_token, optional_user, require_user
+from .auth import ADMINS, PERSONAS, ensure_personas, get_or_create_user, issue_token, optional_user, require_user
 from .config import settings
 from .db import get_db
-from .models import LedgerEntry, Membership, Proposal, Quest, Receipt, User, WebhookEvent, utcnow
+from .models import Case, LedgerEntry, Membership, Proposal, Quest, Receipt, User, WebhookEvent, utcnow
 from .paypal.gateway import PayPalError, gateway_for, paypal_mode
 from .views import ledger_out, membership_out, quest_card, quest_detail, user_out
 
@@ -113,7 +113,7 @@ class SignInIn(BaseModel):
 def personas(db: Session = Depends(get_db)):
     users = ensure_personas(db)
     db.commit()
-    return [user_out(users[p[0]]) for p in PERSONAS]
+    return [user_out(users[p[0]]) for p in PERSONAS + ADMINS]
 
 
 @router.post("/auth/demo")
@@ -249,10 +249,10 @@ def create_quest(body: QuestIn, user: User = Depends(require_user), db: Session 
         line_code=(body.line_code or "SQ").upper()[:2], from_label=body.from_label, to_label=body.to_label,
         meet_point=body.meet_point, starts_at=starts, ends_at=ends, join_by=join_by, tz=body.tz,
         min_people=body.min_people, max_people=body.max_people, currency=settings.currency,
-        fee_bps=int(round(settings.platform_fee_pct * 100)),
         cost_lines=[c.model_dump() for c in body.cost_lines],
         itinerary=[s.model_dump() for s in body.itinerary],
     )
+    fees.apply_to(db, q)  # the quest keeps today's fees even if the schedule changes later
     db.add(q)
     db.flush()
     engine.say(db, q, f"{user.name} posted this quest. It runs if {q.min_people} people commit by the deadline.",
@@ -410,15 +410,29 @@ def report_problem(quest_id: str, body: ProblemIn, user: User = Depends(require_
     return _detail(db, q, user)
 
 
-class ResolveIn(BaseModel):
-    note: str = Field(default="", max_length=280)
+class ReplyIn(BaseModel):
+    text: str = Field(min_length=3, max_length=600)
 
 
-@router.post("/quests/{quest_id}/problem/resolve")
-def resolve_problem(quest_id: str, body: ResolveIn, user: User = Depends(require_user), db: Session = Depends(get_db)):
-    with locked(db, quest_id) as q:
-        _host_only(q, user)
-        engine.resolve_problem(db, q, body.note)
+def _case_quest(db: Session, case_id: str) -> str:
+    c = db.get(Case, case_id)
+    if not c:
+        raise HTTPException(404, "That report doesn't exist.")
+    return c.quest_id
+
+
+@router.post("/cases/{case_id}/respond")
+def respond_to_case(case_id: str, body: ReplyIn, user: User = Depends(require_user), db: Session = Depends(get_db)):
+    """The host's side of the story. Only a Sidequest admin can resolve the report."""
+    with locked(db, _case_quest(db, case_id)) as q:
+        cases.respond(db, db.get(Case, case_id), user, body.text)
+    return _detail(db, q, user)
+
+
+@router.post("/cases/{case_id}/withdraw")
+def withdraw_case(case_id: str, user: User = Depends(require_user), db: Session = Depends(get_db)):
+    with locked(db, _case_quest(db, case_id)) as q:
+        cases.withdraw(db, db.get(Case, case_id), user)
     return _detail(db, q, user)
 
 
@@ -496,8 +510,10 @@ async def paypal_webhook(request: Request, db: Session = Depends(get_db)):
     db.commit()
     batch = (resource.get("batch_header") or {}).get("payout_batch_id") or resource.get("payout_batch_id")
     invoice_id = (resource.get("invoice") or {}).get("id")  # invoicing events nest the invoice
+    disputed = next((t.get("seller_transaction_id") for t in resource.get("disputed_transactions") or []
+                     if t.get("seller_transaction_id")), None)  # dispute events point at our capture
     quest_id = (_quest_for_resource(db, resource.get("id")) or _quest_for_resource(db, batch)
-                or _quest_for_resource(db, invoice_id))
+                or _quest_for_resource(db, invoice_id) or _quest_for_resource(db, disputed))
     if not quest_id:
         return {"status": "unknown"}
     with engine.quest_lock(quest_id):

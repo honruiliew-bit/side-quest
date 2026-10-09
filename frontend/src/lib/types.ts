@@ -1,4 +1,4 @@
-export type UserLite = { id: string; name: string; initials: string; color: string; persona: string | null };
+export type UserLite = { id: string; name: string; initials: string; color: string; persona: string | null; is_admin?: boolean };
 
 export type MemberStatus =
   | "pending"
@@ -122,12 +122,13 @@ export type QuestDetail = QuestCard & {
   shared_cents: number;
   each_cents: number;
   fee_bps: number;
+  fee_fixed_cents: number;
   itinerary: Stop[];
   price_table: { people: number; cents: number }[];
   seats: { seat: number; is_minimum: boolean; member: Membership | null }[];
   standby: Membership[];
   money: { held_cents: number; charged_cents: number; refunded_cents: number; paid_out_cents: number };
-  viewer: { role: "host" | "member" | "guest"; membership: Membership | null };
+  viewer: { role: "host" | "member" | "guest"; membership: Membership | null; is_admin: boolean };
   ledger: LedgerEntry[];
   messages: ChatMessage[];
   proposals: Proposal[];
@@ -136,6 +137,22 @@ export type QuestDetail = QuestCard & {
   host_stats: { hosted: number; completed: number; travelers: number };
   receipts: Receipt[];
   payout: { due_at: string; paused_reason: string | null; blocker: string | null; hold_hours: number };
+  cases: QuestCase[];
+};
+
+/** A report on a quest. A Sidequest admin decides it, not the host. */
+export type QuestCase = {
+  id: string;
+  status: "open" | "resolved" | "withdrawn";
+  source: "member" | "paypal";
+  reason: string;
+  reporter: UserLite | null;
+  host_response: string | null;
+  decision: string | null;
+  resolution_note: string | null;
+  created_at: string;
+  resolved_at: string | null;
+  mine: boolean;
 };
 
 export type AppConfig = {

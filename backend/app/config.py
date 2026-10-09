@@ -50,7 +50,14 @@ class Settings:
 
     # Money
     currency: str = os.getenv("CURRENCY", "USD")
-    platform_fee_pct: float = float(os.getenv("PLATFORM_FEE_PCT", "0"))
+    # The starting fee schedule. After launch an admin changes fees from the admin page, not here.
+    booking_fee_bps: int = int(os.getenv("BOOKING_FEE_BPS", "600"))
+    booking_fee_fixed_cents: int = int(os.getenv("BOOKING_FEE_FIXED_CENTS", "50"))
+    host_fee_bps: int = int(os.getenv("HOST_FEE_BPS", "0"))
+    # PayPal's US rates, used only when PayPal doesn't report the fee itself (simulated payments).
+    paypal_fee_bps: int = int(os.getenv("PAYPAL_FEE_BPS", "349"))
+    paypal_fee_fixed_cents: int = int(os.getenv("PAYPAL_FEE_FIXED_CENTS", "49"))
+    payout_fee_cents: int = int(os.getenv("PAYOUT_FEE_CENTS", "25"))
 
     # AI
     anthropic_api_key: str = os.getenv("ANTHROPIC_API_KEY", "")

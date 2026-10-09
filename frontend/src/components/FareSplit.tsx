@@ -21,11 +21,15 @@ export function FareSplit({ q }: { q: QuestDetail }) {
                 <td className="px-4 py-3 text-right">{money(l.cents)}</td>
               </tr>
             ))}
-            {q.fee_bps > 0 && (
+            {(q.fee_bps > 0 || q.fee_fixed_cents > 0) && (
               <tr className="border-t border-rule">
-                <td className="px-4 py-3">Sidequest fee</td>
-                <td className="px-4 py-3 text-muted">{(q.fee_bps / 100).toFixed(1)}% of each share</td>
-                <td className="px-4 py-3 text-right" />
+                <td className="px-4 py-3">Booking fee</td>
+                <td className="px-4 py-3 text-muted">
+                  {q.fee_bps > 0 ? `${q.fee_bps / 100}% of your share` : ""}
+                  {q.fee_bps > 0 && q.fee_fixed_cents > 0 ? " + " : ""}
+                  {q.fee_fixed_cents > 0 ? `${money(q.fee_fixed_cents)} each` : ""}
+                </td>
+                <td className="px-4 py-3 text-right text-[14px] text-muted">In every price below</td>
               </tr>
             )}
           </tbody>

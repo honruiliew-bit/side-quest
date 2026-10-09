@@ -14,6 +14,7 @@ import {
   type ValueFormatterParams,
 } from "ag-grid-community";
 import { money, timeAgo } from "@/lib/format";
+import { API, EVENT } from "@/lib/ledger";
 import type { LedgerEntry, LedgerKind } from "@/lib/types";
 
 ModuleRegistry.registerModules([AllCommunityModule]);
@@ -24,29 +25,7 @@ export type LedgerRow = LedgerEntry & {
 
 type Row = LedgerRow & { pinned?: boolean };
 
-export const EVENT: Record<LedgerKind, string> = {
-  hold: "Hold placed",
-  release: "Hold released",
-  charge: "Charged",
-  refund: "Refunded",
-  payout: "Paid out to host",
-  invoice: "Invoice sent",
-  invoice_paid: "Invoice paid",
-  reauthorize: "Hold renewed",
-  decline: "Declined",
-};
-
-export const API: Record<LedgerKind, string> = {
-  hold: "Orders v2 authorize",
-  release: "Void authorization",
-  charge: "Capture authorization",
-  refund: "Refund capture",
-  payout: "Payouts v1",
-  invoice: "Agent Toolkit invoice",
-  invoice_paid: "Invoicing",
-  reauthorize: "Reauthorize",
-  decline: "PayPal error",
-};
+export { API, EVENT };
 
 const FILTERS: { id: string; label: string; kinds: LedgerKind[] | null }[] = [
   { id: "all", label: "All", kinds: null },

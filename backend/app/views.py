@@ -5,11 +5,11 @@ from __future__ import annotations
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from .models import LedgerEntry, Message, Proposal, Quest, Receipt, User, aware
+from .models import Case, LedgerEntry, Message, Proposal, Quest, Receipt, User, aware
 from .engine import current_share, headcount, payout_blocker, payout_due_at, quest_hold, receipt_out, seated, standby
 from .config import settings
 from .paypal.gateway import paypal_mode
-from .pricing import price_cents, price_table, totals
+from .pricing import quest_price, quest_price_table, totals
 
 STAGE = {"open": 1, "on": 2, "locked": 3, "completed": 4, "cancelled": 0}
 
@@ -22,7 +22,8 @@ def iso(dt):
 def user_out(u: User | None) -> dict | None:
     if not u:
         return None
-    return {"id": u.id, "name": u.name, "initials": u.initials, "color": u.color, "persona": u.persona}
+    return {"id": u.id, "name": u.name, "initials": u.initials, "color": u.color, "persona": u.persona,
+            "is_admin": bool(u.is_admin)}
 
 
 def quest_card(q: Quest) -> dict:
@@ -47,7 +48,7 @@ def quest_card(q: Quest) -> dict:
         "standby_count": len(standby(q)),
         "hold_cents": quest_hold(q),
         "share_cents": current_share(q),
-        "lowest_cents": price_cents(q.cost_lines, q.max_people, q.fee_bps),
+        "lowest_cents": quest_price(q, q.max_people),
         "currency": q.currency,
         "host": user_out(q.host),
         "faces": [user_out(m.user) for m in people][:q.max_people],
@@ -122,6 +123,7 @@ def quest_detail(db: Session, q: Quest, viewer: User | None) -> dict:
     charged = sum(m.charged_cents for m in q.memberships)
     refunded = sum(m.refunded_cents for m in q.memberships)
     paid_out = sum(e.cents for e in ledger if e.kind == "payout")
+    quest_cases = db.scalars(select(Case).where(Case.quest_id == q.id).order_by(Case.created_at.desc()).limit(10)).all()
 
     out.update({
         "summary": q.summary,
@@ -130,12 +132,13 @@ def quest_detail(db: Session, q: Quest, viewer: User | None) -> dict:
         "shared_cents": shared,
         "each_cents": each,
         "fee_bps": q.fee_bps,
+        "fee_fixed_cents": q.fee_fixed_cents or 0,
         "itinerary": q.itinerary,
-        "price_table": price_table(q.cost_lines, q.min_people, q.max_people, q.fee_bps),
+        "price_table": quest_price_table(q),
         "seats": seats,
         "standby": [membership_out(m) for m in standby(q)],
         "money": {"held_cents": held, "charged_cents": charged, "refunded_cents": refunded, "paid_out_cents": paid_out},
-        "viewer": {"role": role, "membership": mine},
+        "viewer": {"role": role, "membership": mine, "is_admin": bool(viewer and viewer.is_admin)},
         "ledger": [ledger_out(e) for e in ledger],
         "messages": [{
             "id": msg.id, "role": msg.role, "body": msg.body, "user": user_out(msg.user),
@@ -153,6 +156,12 @@ def quest_detail(db: Session, q: Quest, viewer: User | None) -> dict:
             "blocker": payout_blocker(db, q) if q.status == "locked" else None,
             "hold_hours": settings.payout_hold_hours,
         },
+        "cases": [{
+            "id": c.id, "status": c.status, "source": c.source, "reason": c.reason, "reporter": user_out(c.reporter),
+            "host_response": c.host_response, "decision": c.decision, "resolution_note": c.resolution_note,
+            "created_at": iso(c.created_at), "resolved_at": iso(c.resolved_at),
+            "mine": bool(viewer and c.opened_by == viewer.id),
+        } for c in quest_cases],
         "timestamps": {
             "tipped_at": iso(q.tipped_at), "locked_at": iso(q.locked_at),
             "completed_at": iso(q.completed_at), "cancelled_at": iso(q.cancelled_at),

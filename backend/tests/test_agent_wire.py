@@ -11,7 +11,8 @@ import httpx2 as httpx
 DB = Path(__file__).parent / "test_agent.db"
 if DB.exists():
     DB.unlink()
-os.environ.update({"DATABASE_URL": f"sqlite:///{DB}", "PAYPAL_MODE": "mock", "ANTHROPIC_API_KEY": "sk-test"})
+os.environ.update({"DATABASE_URL": f"sqlite:///{DB}", "PAYPAL_MODE": "mock", "ANTHROPIC_API_KEY": "sk-test",
+                   "BOOKING_FEE_BPS": "0", "BOOKING_FEE_FIXED_CENTS": "0"})
 os.environ.pop("ANTHROPIC_BASE_URL", None)
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 

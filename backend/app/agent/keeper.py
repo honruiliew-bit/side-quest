@@ -16,7 +16,7 @@ from sqlalchemy.orm import Session
 from .. import engine
 from ..models import Membership, Quest, User
 from ..paypal import toolkit
-from ..pricing import fmt, price_cents
+from ..pricing import fmt, quest_price
 from ..views import agent_state
 from . import llm
 
@@ -64,7 +64,7 @@ TOOLS = [
         "name": "report_problem",
         "description": ("Pause the host's payout because something went wrong with the trip, for example the van never "
                         "came or a paid stop was closed. Only for the person speaking, and only after the quest is "
-                        "charged. The host has to resolve it before they are paid."),
+                        "charged. A Sidequest admin reviews it before the host is paid."),
         "input_schema": {"type": "object", "properties": {"reason": {"type": "string"}}, "required": ["reason"]},
     },
     {
@@ -88,7 +88,8 @@ How you talk
 What you can do
 - Answer questions about the plan, the split and who is going. Call get_quest_state first.
 - If the speaker paid and says something went wrong on the trip (no-show van, closed venue, safety issue),
-  call report_problem. It pauses the host's payout until the host resolves it.
+  call report_problem. It pauses the host's payout until a Sidequest admin reviews it. The host can reply,
+  but only the admin decides.
 - If someone asks a factual question about a stop (food, access, what to bring) and you know a reliable
   answer, give it and save it with add_stop_note. If you're unsure, say so and suggest asking the host.
 - If the speaker says they can't come, call leave_quest for them. Never remove someone else.
@@ -127,7 +128,7 @@ def _handler(db: Session, quest: Quest, speaker: User):
             n = int(args["people"])
             if n < 1:
                 raise ValueError("people must be at least 1")
-            return {"people": n, "share": fmt(price_cents(quest.cost_lines, n, quest.fee_bps))}
+            return {"people": n, "share": fmt(quest_price(quest, n))}
         if name == "leave_quest":
             m = engine.membership_for(quest, speaker.id)
             if not m:
@@ -145,7 +146,7 @@ def _handler(db: Session, quest: Quest, speaker: User):
             return {"result": "Sent to the host for approval.", "proposal_id": p.id}
         if name == "report_problem":
             engine.report_problem(db, quest, speaker, str(args.get("reason", "")))
-            return {"result": "Reported. The host's payout is paused until they resolve it."}
+            return {"result": "Reported. The host's payout is paused until a Sidequest admin reviews it."}
         if name == "add_stop_note":
             idx = int(args["stop_index"])
             plan = [dict(s) for s in quest.itinerary]
@@ -231,12 +232,12 @@ def _offline(db: Session, quest: Quest, speaker: User, text: str) -> tuple[str, 
     if quest.status == "locked" and re.search(r"never (came|showed)|didn'?t (happen|show)|no.?show|was closed|scam|problem", t):
         try:
             engine.report_problem(db, quest, speaker, text)
-            return (f"I've paused {quest.host.name}'s payout and flagged it. {quest.host.name} has to resolve it before "
-                    f"any money is released."), ["report_problem"]
+            return (f"I've paused {quest.host.name}'s payout and sent your report to a Sidequest admin. "
+                    f"{quest.host.name} can reply, and the admin decides before any money is released."), ["report_problem"]
         except engine.QuestError as exc:
             return str(exc), []
     if re.search(r"how much|price|cost|split|pay|charge|cheaper", t):
-        low = price_cents(quest.cost_lines, quest.max_people, quest.fee_bps)
+        low = quest_price(quest, quest.max_people)
         if quest.status in {"locked", "completed"}:
             return f"Everyone was charged {fmt(share)}, the final split for {n} people.", ["get_quest_state"]
         return (f"Your hold is {fmt(hold)}, the most you can pay. With {max(n, quest.min_people)} going it's "

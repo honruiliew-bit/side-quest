@@ -22,6 +22,9 @@ con.close()
 os.environ.update({
     "DATABASE_URL": f"sqlite:///{DB}",
     "PAYPAL_MODE": "mock",
+    # Amounts in these tests are the bare split. Fees have their own tests in test_admin.py.
+    "BOOKING_FEE_BPS": "0",
+    "BOOKING_FEE_FIXED_CENTS": "0",
     "ANTHROPIC_API_KEY": "",
     "DEMO_MODE": "1",
     "SEED_ON_START": "1",
@@ -164,7 +167,15 @@ def test_payout_releases_itself_after_the_trip_unless_paused(client):
     with session_scope() as db:
         tick(db)
     assert client.get(f"/quests/{qid}").json()["status"] == "locked"  # paused, not paid
-    client.post(f"/quests/{qid}/problem/resolve", json={"note": "Refunded the van"}, headers=hon)
+    case = d["cases"][0]
+    # The host can reply but can't close it. Only a Sidequest admin decides.
+    assert client.post(f"/cases/{case['id']}/respond", json={"text": "The van was 20 minutes late"}, headers=hon).status_code == 200
+    assert client.post(f"/admin/cases/{case['id']}/resolve", headers=hon,
+                       json={"decision": "release", "note": "ok"}).status_code == 403
+    kai = login(client, "kai")
+    r = client.post(f"/admin/cases/{case['id']}/resolve", headers=kai,
+                    json={"decision": "release", "note": "Late van, but the trip ran."})
+    assert r.status_code == 200 and r.json()["status"] == "resolved"
     with session_scope() as db:
         tick(db)
     d = client.get(f"/quests/{qid}").json()

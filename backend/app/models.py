@@ -53,6 +53,8 @@ class User(Base):
     color: Mapped[str] = mapped_column(String(9), default="#FFC93C")
     is_demo: Mapped[bool] = mapped_column(Boolean, default=False)
     persona: Mapped[str | None] = mapped_column(String(40), nullable=True, index=True)
+    # Sidequest staff. Admins mediate reports, audit payments and set fees.
+    is_admin: Mapped[bool | None] = mapped_column(Boolean, nullable=True, default=False)
     payout_email: Mapped[str | None] = mapped_column(String(200), nullable=True)
     created_at: Mapped[datetime] = mapped_column(TZDateTime(), default=utcnow)
 
@@ -90,7 +92,10 @@ class Quest(Base):
     min_people: Mapped[int] = mapped_column(Integer)
     max_people: Mapped[int] = mapped_column(Integer)
     currency: Mapped[str] = mapped_column(String(3), default="USD")
-    fee_bps: Mapped[int] = mapped_column(Integer, default=0)
+    # Fees are copied from the fee schedule when the quest is created and never change after that.
+    fee_bps: Mapped[int] = mapped_column(Integer, default=0)  # booking fee, percent of each share
+    fee_fixed_cents: Mapped[int | None] = mapped_column(Integer, nullable=True, default=0)  # booking fee, per person
+    host_fee_bps: Mapped[int | None] = mapped_column(Integer, nullable=True, default=0)  # taken from the host payout
     # [{"label": str, "cents": int, "split": "shared" | "each"}]
     cost_lines: Mapped[list] = mapped_column(JSON, default=list)
     # [{"time": "8:10 am", "title": str, "detail": str, "note": str | None}]
@@ -140,6 +145,8 @@ class Membership(Base):
     hold_cents: Mapped[int] = mapped_column(Integer, default=0)
     charged_cents: Mapped[int] = mapped_column(Integer, default=0)
     refunded_cents: Mapped[int] = mapped_column(Integer, default=0)
+    # The booking fee inside charged_cents. Sidequest keeps it unless the charge is fully refunded.
+    fee_cents: Mapped[int | None] = mapped_column(Integer, nullable=True)
     seat: Mapped[int | None] = mapped_column(Integer, nullable=True)
     created_at: Mapped[datetime] = mapped_column(TZDateTime(), default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(TZDateTime(), default=utcnow, onupdate=utcnow)
@@ -165,6 +172,13 @@ class LedgerEntry(Base):
     note: Mapped[str] = mapped_column(Text, default="")
     confirmed: Mapped[bool] = mapped_column(Boolean, default=False)  # set when a webhook confirms it
     raw: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    # What PayPal charged Sidequest for this event. Negative on refunds, when PayPal hands part of it back.
+    fee_cents: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    fee_source: Mapped[str | None] = mapped_column(String(10), nullable=True)  # paypal | estimate
+    # Set by the admin audit: matched | mismatch | missing | simulated | error
+    recon_status: Mapped[str | None] = mapped_column(String(12), nullable=True)
+    recon_note: Mapped[str | None] = mapped_column(Text, nullable=True)
+    recon_at: Mapped[datetime | None] = mapped_column(TZDateTime(), nullable=True)
     created_at: Mapped[datetime] = mapped_column(TZDateTime(), default=utcnow)
 
     user: Mapped[User | None] = relationship(lazy="joined")
@@ -248,6 +262,72 @@ class Invoice(Base):
 
     user: Mapped[User] = relationship(lazy="joined")
     quest: Mapped["Quest"] = relationship()
+
+
+class Case(Base):
+    """A report that pauses a payout until a Sidequest admin decides. Opened by a member or by a PayPal dispute."""
+
+    __tablename__ = "cases"
+
+    id: Mapped[str] = mapped_column(String(40), primary_key=True, default=lambda: new_id("cs"))
+    quest_id: Mapped[str] = mapped_column(ForeignKey("quests.id"), index=True)
+    membership_id: Mapped[str | None] = mapped_column(ForeignKey("memberships.id"), nullable=True)
+    opened_by: Mapped[str | None] = mapped_column(ForeignKey("users.id"), nullable=True)
+    source: Mapped[str] = mapped_column(String(10), default="member")  # member | paypal
+    provider: Mapped[str] = mapped_column(String(12), default="paypal")  # paypal | sim (seeded demo data)
+    paypal_dispute_id: Mapped[str | None] = mapped_column(String(80), nullable=True, unique=True)
+    paypal_reason: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    paypal_status: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    reason: Mapped[str] = mapped_column(Text, default="")
+    disputed_cents: Mapped[int] = mapped_column(Integer, default=0)
+    # open | resolved | withdrawn
+    status: Mapped[str] = mapped_column(String(12), default="open", index=True)
+    host_response: Mapped[str | None] = mapped_column(Text, nullable=True)
+    host_responded_at: Mapped[datetime | None] = mapped_column(TZDateTime(), nullable=True)
+    ai_review: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    # release | refund_reporter | refund_everyone | accept_claim
+    decision: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    refund_cents_each: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    resolution_note: Mapped[str | None] = mapped_column(Text, nullable=True)
+    resolved_by: Mapped[str | None] = mapped_column(ForeignKey("users.id"), nullable=True)
+    resolved_at: Mapped[datetime | None] = mapped_column(TZDateTime(), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(TZDateTime(), default=utcnow)
+
+    quest: Mapped[Quest] = relationship()
+    reporter: Mapped[User | None] = relationship(foreign_keys=[opened_by], lazy="joined")
+    resolver: Mapped[User | None] = relationship(foreign_keys=[resolved_by], lazy="joined")
+
+
+class FeeSchedule(Base):
+    """What Sidequest charges. The newest row applies to quests created after it."""
+
+    __tablename__ = "fee_schedules"
+
+    id: Mapped[str] = mapped_column(String(40), primary_key=True, default=lambda: new_id("fee"))
+    booking_bps: Mapped[int] = mapped_column(Integer, default=0)
+    booking_fixed_cents: Mapped[int] = mapped_column(Integer, default=0)
+    host_bps: Mapped[int] = mapped_column(Integer, default=0)
+    reason: Mapped[str] = mapped_column(Text, default="")
+    created_by: Mapped[str | None] = mapped_column(ForeignKey("users.id"), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(TZDateTime(), default=utcnow)
+
+    author: Mapped[User | None] = relationship(lazy="joined")
+
+
+class AuditLog(Base):
+    """Every staff action and every decision that changes who gets paid."""
+
+    __tablename__ = "audit_log"
+
+    id: Mapped[str] = mapped_column(String(40), primary_key=True, default=lambda: new_id("au"))
+    actor_id: Mapped[str | None] = mapped_column(ForeignKey("users.id"), nullable=True)
+    action: Mapped[str] = mapped_column(String(40), index=True)
+    target: Mapped[str | None] = mapped_column(String(40), nullable=True, index=True)
+    summary: Mapped[str] = mapped_column(Text, default="")
+    detail: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(TZDateTime(), default=utcnow)
+
+    actor: Mapped[User | None] = relationship(lazy="joined")
 
 
 class WebhookEvent(Base):

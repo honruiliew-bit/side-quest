@@ -15,7 +15,8 @@ const NAV = [
 
 export function Header() {
   const path = usePathname();
-  const { config } = useSession();
+  const { config, user } = useSession();
+  const nav = user?.is_admin ? [...NAV, { href: "/admin", label: "Admin" }] : NAV;
   return (
     <header className="bg-ink text-stock">
       <a href="#main" className="sr-only focus:not-sr-only focus:absolute focus:left-4 focus:top-4 focus:bg-signal focus:px-3 focus:py-2 focus:text-ink">
@@ -27,7 +28,7 @@ export function Header() {
           Sidequest
         </Link>
         <nav aria-label="Main" className="order-3 flex w-full flex-wrap gap-x-6 gap-y-1 text-[15px] font-medium sm:order-none sm:w-auto">
-          {NAV.map((n) => {
+          {nav.map((n) => {
             const active = n.href === "/" ? path === "/" : path.startsWith(n.href) || (n.href === "/me" && path.startsWith("/books"));
             return (
               <Link
@@ -108,7 +109,7 @@ function DemoMenu() {
             <>
               <p className="px-1 pb-2 text-[13px] text-muted">Demo mode. Switch person to play every side of a quest: Hon hosts, everyone else joins.</p>
               <div className="grid grid-cols-2 gap-1">
-                {personas.map((p) => (
+                {personas.filter((p) => !p.is_admin).map((p) => (
                   <button
                     key={p.id}
                     role="menuitemradio"
@@ -128,6 +129,32 @@ function DemoMenu() {
                   </button>
                 ))}
               </div>
+              {personas.some((p) => p.is_admin) && (
+                <>
+                  <p className="px-1 pb-1 pt-3 text-[13px] text-muted">Sidequest staff. Decides reports, audits payments, sets fees.</p>
+                  {personas.filter((p) => p.is_admin).map((p) => (
+                    <button
+                      key={p.id}
+                      role="menuitemradio"
+                      aria-checked={user?.id === p.id}
+                      type="button"
+                      onClick={async () => {
+                        await signInAs(p.persona!);
+                        setOpen(false);
+                        toast(`You're now ${p.name}, a Sidequest admin.`);
+                        router.push("/admin");
+                      }}
+                      className={`flex min-h-[44px] w-full items-center gap-2 rounded px-2 text-left text-[15px] font-semibold hover:bg-paper ${
+                        user?.id === p.id ? "bg-paper" : ""
+                      }`}
+                    >
+                      <Avatar user={p} size={28} />
+                      {p.name}
+                      <span className="chip chip-sim ml-auto">Admin</span>
+                    </button>
+                  ))}
+                </>
+              )}
               <hr className="my-3 border-rule" />
             </>
           )}

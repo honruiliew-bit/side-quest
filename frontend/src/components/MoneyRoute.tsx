@@ -33,7 +33,7 @@ export function MoneyRoute({ q }: { q: QuestDetail }) {
       detail: stage >= 4
         ? `${money(paidOut)} paid to ${q.host.name}`
         : q.payout?.paused_reason
-          ? "Paused: a member reported a problem"
+          ? "Paused: Sidequest is reviewing a report"
           : `${q.payout?.hold_hours ?? 24} hours after the trip, unless someone reports a problem`,
       api: "Payouts v1",
     },

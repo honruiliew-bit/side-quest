@@ -216,12 +216,15 @@ function PayoutStatus({ q, onChange }: { q: QuestDetail; onChange: (q: QuestDeta
   const { toast } = useSession();
   const [reporting, setReporting] = useState(false);
   const [reason, setReason] = useState("");
+  const [reply, setReply] = useState("");
   const [busy, setBusy] = useState(false);
   const isHost = q.viewer.role === "host";
   const paid = q.viewer.membership?.status === "charged";
   const due = new Date(q.payout.due_at);
   const isDue = due.getTime() <= Date.now();
   const when = `${due.toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric", timeZone: q.tz })}, ${clock(q.payout.due_at, q.tz)}`;
+  const open = (q.cases ?? []).filter((c) => c.status === "open");
+  const mineOpen = open.find((c) => c.mine);
 
   const post = async (path: string, json: unknown, done: string) => {
     setBusy(true);
@@ -230,6 +233,7 @@ function PayoutStatus({ q, onChange }: { q: QuestDetail; onChange: (q: QuestDeta
       toast(done);
       setReporting(false);
       setReason("");
+      setReply("");
     } catch (e) {
       toast(e instanceof Error ? e.message : "That didn't work.", "error");
     } finally {
@@ -239,16 +243,34 @@ function PayoutStatus({ q, onChange }: { q: QuestDetail; onChange: (q: QuestDeta
 
   return (
     <div className="flex flex-col gap-2 rounded border-2 border-ink bg-white p-3 text-[14px]">
-      {q.payout.paused_reason ? (
+      {open.length > 0 ? (
         <>
-          <div className="font-bold text-stamp">Payout paused</div>
-          <p>{q.payout.paused_reason}</p>
-          {isHost && (
-            <button className="btn btn-ink btn-sm" disabled={busy}
-              onClick={() => post(`/quests/${q.id}/problem/resolve`, { note: "" }, "Resolved. The payout is back on schedule.")}>
-              Mark resolved
-            </button>
-          )}
+          <div className="font-bold text-stamp">Payout paused for review</div>
+          {open.map((c) => (
+            <div key={c.id} className="flex flex-col gap-2">
+              <p><strong>{c.source === "paypal" ? `PayPal dispute from ${c.reporter?.name ?? "a member"}` : c.reporter?.name}:</strong> {c.reason}</p>
+              {c.host_response && <p className="border-l-4 border-rule pl-2"><strong>{q.host.name}:</strong> {c.host_response}</p>}
+              {isHost && !c.host_response && (
+                <form className="flex flex-col gap-2" onSubmit={(e) => { e.preventDefault(); post(`/cases/${c.id}/respond`, { text: reply }, "Reply sent to Sidequest."); }}>
+                  <label htmlFor={`reply-${c.id}`} className="text-[13px] font-semibold">Your side</label>
+                  <textarea id={`reply-${c.id}`} className="field" rows={2} value={reply} onChange={(e) => setReply(e.target.value)}
+                    placeholder="What happened, and anything you've already done about it" minLength={3} required />
+                  <button className="btn btn-ink btn-sm self-start" disabled={busy} type="submit">Send to Sidequest</button>
+                </form>
+              )}
+              {c.mine && (
+                <button className="self-start text-[13px] font-semibold underline" disabled={busy}
+                  onClick={() => post(`/cases/${c.id}/withdraw`, {}, "Report withdrawn. The payout is back on schedule.")}>
+                  Withdraw my report
+                </button>
+              )}
+            </div>
+          ))}
+          <p className="text-[13px] text-muted">
+            A Sidequest admin reads both sides, the chat and the receipts, then releases the payout or refunds people through PayPal.
+            {isHost ? " Hosts can reply but can't close a report." : ""}
+          </p>
+          {q.viewer.is_admin && <a href="/admin#cases" className="btn btn-ink btn-sm self-start">Decide in Admin</a>}
         </>
       ) : (
         <>
@@ -266,18 +288,19 @@ function PayoutStatus({ q, onChange }: { q: QuestDetail; onChange: (q: QuestDeta
           )}
         </>
       )}
-      {paid && !q.payout.paused_reason && !reporting && (
+      {paid && !isHost && !mineOpen && !reporting && (
         <button className="self-start text-[13px] font-semibold underline" onClick={() => setReporting(true)}>
           Something went wrong? Report a problem
         </button>
       )}
       {reporting && (
-        <form className="flex flex-col gap-2" onSubmit={(e) => { e.preventDefault(); post(`/quests/${q.id}/problem`, { reason }, "Reported. The payout is paused."); }}>
+        <form className="flex flex-col gap-2" onSubmit={(e) => { e.preventDefault(); post(`/quests/${q.id}/problem`, { reason }, "Reported. A Sidequest admin will review it."); }}>
           <label htmlFor="problem" className="text-[13px] font-semibold">What happened?</label>
           <textarea id="problem" className="field" rows={2} value={reason} onChange={(e) => setReason(e.target.value)}
             placeholder="The van never showed up" minLength={3} required />
+          <p className="text-[12px] text-muted">This pauses the host&apos;s payout. A Sidequest admin decides, not the host.</p>
           <div className="flex gap-2">
-            <button className="btn btn-ink btn-sm" disabled={busy} type="submit">Pause the payout</button>
+            <button className="btn btn-ink btn-sm" disabled={busy} type="submit">Send to Sidequest</button>
             <button className="btn btn-ghost btn-sm" type="button" onClick={() => setReporting(false)}>Cancel</button>
           </div>
         </form>

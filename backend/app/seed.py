@@ -1,5 +1,6 @@
-"""Demo data. Five live quests, each parked at a different stage of the lifecycle, plus two past
-trips Hon hosted, so the host desk has a real history: payouts, refunds and invoices still open."""
+"""Demo data. Five live quests, each parked at a different stage of the lifecycle, two past trips
+Hon hosted, so the host desk has a real history, and a few reports and a PayPal dispute so the
+admin page has work on it: one waiting on a decision, one PayPal dispute, one already decided."""
 
 from __future__ import annotations
 
@@ -9,12 +10,12 @@ from zoneinfo import ZoneInfo
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from . import engine
+from . import cases, engine, fees
 from .auth import ensure_personas
 from .db import Base, engine as db_engine
 import secrets
 
-from .models import Invoice, LedgerEntry, Quest, User
+from .models import AuditLog, Case, FeeSchedule, Invoice, LedgerEntry, Quest, User, utcnow
 from .paypal.gateway import gateway_for
 
 TZ = ZoneInfo("America/New_York")
@@ -46,6 +47,8 @@ def _join(db: Session, quest: Quest, user: User):
 
 def _quest(db: Session, host: User, **kw) -> Quest:
     q = Quest(number=engine.next_number(db), host_id=host.id, **kw)
+    if "fee_bps" not in kw:
+        fees.apply_to(db, q)
     db.add(q)
     db.flush()
     db.refresh(q)
@@ -95,6 +98,7 @@ def make_tour(db: Session) -> Quest:
 
 def seed(db: Session) -> None:
     p = ensure_personas(db)
+    seed_fee_history(db, p)
     sat = _next_weekday(5)
     sun = sat + timedelta(days=1)
     now = datetime.now(TZ)
@@ -208,12 +212,16 @@ def seed(db: Session) -> None:
     db.flush()
 
     seed_history(db, p)
+    seed_cases(db, p)
 
 
 def _past_trip(db: Session, host: User, members: list[User], *, days_ago: int, overage_each: int,
                paid: set[str], reminded: dict[str, int] | None = None, **kw) -> Quest:
     """A finished quest with a settle up already sent. Invoices are simulated and labelled as such."""
     now = datetime.now(TZ)
+    # A trip posted before launch pricing kept the beta terms: no fees.
+    if days_ago + 9 > LAUNCH_DAYS_AGO:
+        kw = {**kw, "fee_bps": 0, "fee_fixed_cents": 0, "host_fee_bps": 0}
     q = _quest(db, host, starts_at=now + timedelta(days=1), ends_at=None, join_by=now + timedelta(hours=12), **kw)
     for m in members:
         _join(db, q, m)
@@ -291,14 +299,126 @@ def seed_history(db: Session, p: dict[str, User]) -> None:
     )
 
 
+LAUNCH_DAYS_AGO = 30
+
+
+def seed_fee_history(db: Session, p: dict[str, User]) -> None:
+    """Free during the beta, then launch pricing. The newest row is what new quests get."""
+    now = utcnow()
+    db.add(FeeSchedule(booking_bps=0, booking_fixed_cents=0, host_bps=0,
+                       reason="Beta: free while we test with friends", created_at=now - timedelta(days=75)))
+    db.flush()
+    launch = FeeSchedule(booking_bps=fees.settings.booking_fee_bps,
+                         booking_fixed_cents=fees.settings.booking_fee_fixed_cents,
+                         host_bps=fees.settings.host_fee_bps, created_by=p["kai"].id,
+                         reason="Launch pricing: covers PayPal's fees with a margin. Hosts pay nothing.",
+                         created_at=now - timedelta(days=LAUNCH_DAYS_AGO))
+    db.add(launch)
+    db.flush()
+    db.add(AuditLog(actor_id=p["kai"].id, action="fee_change", target=launch.id, created_at=launch.created_at,
+                    summary=f"Fees changed to {fees.describe(launch)}. Was free during the beta. {launch.reason}"))
+    db.flush()
+
+
+def _backdate(db: Session, target: str, when: datetime) -> None:
+    for a in db.scalars(select(AuditLog).where(AuditLog.target == target)):
+        a.created_at = when
+
+
+def seed_cases(db: Session, p: dict[str, User]) -> None:
+    now = datetime.now(TZ)
+
+    # 1. Waiting on a decision. The trip ended this afternoon, so the payout is due tomorrow.
+    kb = _quest(
+        db, p["theo"], line_code="JB",
+        title="Jamaica Bay guided kayak and sunset", area="Jamaica Bay, Queens",
+        summary="A two hour guided paddle through the marsh islands, then sunset from the dock.",
+        from_label="Broad Channel", to_label="Jamaica Bay", meet_point="Broad Channel A station",
+        starts_at=now + timedelta(days=1), ends_at=None, join_by=now + timedelta(hours=12),
+        min_people=4, max_people=6,
+        cost_lines=[
+            {"label": "Kayak outfitter, guided 2 hours", "cents": 30000, "split": "shared"},
+            {"label": "Dry bag and snacks", "cents": 1200, "split": "each"},
+        ],
+        itinerary=[
+            {"time": "10:00 am", "title": "Meet at Broad Channel", "detail": "A train to Broad Channel"},
+            {"time": "10:30 am", "title": "Guided paddle", "detail": "Two hours through the marsh islands"},
+            {"time": "1:00 pm", "title": "Lunch on the dock", "detail": "Pay your own"},
+        ],
+    )
+    for who in ("theo", "jules", "noor", "sam", "ana"):
+        _join(db, kb, p[who])
+    db.refresh(kb)
+    engine.lock(db, kb, reason="Theo locked the quest.")
+    trip = now - timedelta(hours=8)
+    kb.starts_at, kb.ends_at = trip - timedelta(hours=2), trip + timedelta(hours=3)
+    kb.join_by = trip - timedelta(days=2)
+    engine.say(db, kb, "Wind picked up around 11 and the guide called it early.", role="user", user=p["sam"])
+    engine.say(db, kb, "We were back on the dock by 11:30, so about an hour on the water.", role="user", user=p["noor"])
+    db.flush()
+    c = cases.report(db, kb, p["jules"], "We only got one hour on the water. The listing said two.")
+    cases.respond(db, c, p["theo"], "The outfitter cut it short for a wind advisory. They refunded me $100 "
+                                    "for the missed hour, which I'm happy to pass on to the group.")
+    c.created_at = now - timedelta(hours=3)
+    c.host_responded_at = now - timedelta(hours=2)
+    _backdate(db, c.id, now - timedelta(hours=2))
+
+    # 2. A PayPal dispute on a trip whose host was already paid. Sidequest is on the hook if it's accepted.
+    ri = db.scalar(select(Quest).where(Quest.line_code == "RI", Quest.tour.isnot(True)))
+    noor = next((m for m in ri.memberships if m.user_id == p["noor"].id and m.capture_id), None) if ri else None
+    if noor:
+        d = cases.from_paypal_dispute(db, {
+            "dispute_id": "PP-D-" + secrets.token_hex(4).upper(),
+            "reason": "MERCHANDISE_OR_SERVICE_NOT_AS_DESCRIBED",
+            "status": "WAITING_FOR_SELLER_RESPONSE",
+            "dispute_amount": {"currency_code": "USD", "value": f"{noor.charged_cents / 100:.2f}"},
+            "disputed_transactions": [{"seller_transaction_id": noor.capture_id}],
+            "messages": [{"posted_by": "BUYER", "content": "We skipped the lobster stop and got home at 1 am."}],
+        }, provider="sim")
+        if d:
+            d.created_at = now - timedelta(days=1, hours=4)
+            _backdate(db, d.id, d.created_at)
+
+    # 3. Decided weeks ago: a late rental car, but the trip ran in full.
+    ck = db.scalar(select(Quest).where(Quest.line_code == "CK", Quest.tour.isnot(True)))
+    theo = next((m for m in ck.memberships if m.user_id == p["theo"].id), None) if ck else None
+    if theo:
+        when = aware_dt(ck.ends_at) + timedelta(hours=3)
+        old = Case(quest_id=ck.id, membership_id=theo.id, opened_by=p["theo"].id, source="member", provider="sim",
+                   reason="The car was 40 minutes late, so we missed sunrise at the tower.",
+                   disputed_cents=theo.charged_cents, status="resolved", decision="release",
+                   host_response="Hertz had the car late. I called ahead and we still did the full hike.",
+                   host_responded_at=when + timedelta(hours=2),
+                   resolution_note="Late pickup, but the trip ran in full and nobody missed a paid stop. Payout released.",
+                   resolved_by=p["kai"].id, resolved_at=when + timedelta(hours=6), created_at=when)
+        db.add(old)
+        db.flush()
+        db.add(AuditLog(actor_id=p["theo"].id, action="case_opened", target=old.id, created_at=when,
+                        summary=f"Theo reported a problem on {ck.code}: {old.reason}"))
+        db.add(AuditLog(actor_id=p["kai"].id, action="case_resolved", target=old.id, created_at=old.resolved_at,
+                        summary=f"Kai resolved a report on {ck.code}: released the payout. {old.resolution_note}",
+                        detail={"decision": "release"}))
+    db.flush()
+
+
+def aware_dt(dt: datetime) -> datetime:
+    return dt if dt.tzinfo else dt.replace(tzinfo=TZ)
+
+
 def seed_if_empty(db: Session) -> bool:
     if db.scalar(select(Quest.id).limit(1)):
         p = ensure_personas(db)
+        changed = False
         # Databases seeded before the host desk existed get its history once.
         if not db.scalar(select(Quest.id).where(Quest.line_code == "MT", Quest.tour.isnot(True)).limit(1)):
             seed_history(db, p)
-            return True
-        return False
+            changed = True
+        # And before the admin page existed: fee history and a few cases to review.
+        if not db.scalar(select(FeeSchedule.id).limit(1)):
+            seed_fee_history(db, p)
+            seed_cases(db, p)
+            changed = True
+        return changed
     seed(db)
     return True
 

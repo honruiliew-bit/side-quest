@@ -18,18 +18,21 @@ PayPal already has the right building block: authorize now, capture later. Sideq
 3. **Claude does the admin, the host approves the money.** Claude plans the quest from one sentence, runs the group chat, swaps dropouts with people on standby, and reads receipts to settle up with refunds or PayPal invoices. It can only propose money moves. The host sees the exact PayPal operations and approves them.
 
 Around that core:
-- **Escrowed payout.** The host is paid through PayPal Payouts 24 hours after the trip, unless a member reports a problem.
+- **Escrowed payout.** The host is paid through PayPal Payouts 24 hours after the trip, unless a member reports a problem or opens a PayPal dispute.
+- **Admin console.** Sidequest staff decide reports, never the host. Claude reads the chat, receipts and payments and suggests a remedy; the admin approves it. The same console audits every payment against PayPal, shows revenue net of PayPal's fees, and edits the fee schedule.
 - **Host desk.** An AG Studio dashboard of every payment and who still owes, with nudges sent through PayPal's invoice reminders and Claude to build any view.
 - **Agentic commerce.** Sidequest is an MCP server. Claude, ChatGPT or any MCP client can find a quest and start a hold. You still approve it on PayPal. Scout, a small assistant in the corner of every page, uses the same four tools, so judges can try it without installing anything.
 
 ## Business model
 
-Sidequest adds a small fee to each share, collected only when a quest runs (`PLATFORM_FEE_PCT`). Hosts pay nothing to post, and if a quest doesn't run nobody pays anything, including the fee. Hosts are paid through PayPal Payouts after the trip.
+A booking fee of 6% + $0.50 per person, inside the hold, so "most you'll pay" still holds. It's only collected when a quest runs, and it's refunded with a full refund. A host fee exists but is 0% at launch. On a $75 share the member approves $80.00, PayPal takes about $3.34, the host gets $75.00 and Sidequest keeps $1.66.
+
+Fees are set by admins from the dashboard. Each quest keeps the terms it was posted with, so changing fees never changes what anyone agreed to. The admin money view reads PayPal's real fee from every capture and refund, so revenue is always net of PayPal.
 
 ## How we built it
 
 - **Backend:** FastAPI, SQLAlchemy and Render Postgres. A single quest engine owns every money move and enforces the rules the agent can't bend: captures never exceed the authorization, refunds never exceed the capture.
-- **PayPal:** Orders v2 with `intent: AUTHORIZE`, authorization capture (partial, `final_capture`), void, reauthorize after the honor period, capture refunds, Payouts v1, webhooks with signature verification, and JS SDK Smart Buttons with PayPal, Venmo and cards.
+- **PayPal:** Orders v2 with `intent: AUTHORIZE`, authorization capture (partial, `final_capture`), void, reauthorize after the honor period, capture refunds, Payouts v1, webhooks with signature verification, and JS SDK Smart Buttons with PayPal, Venmo and cards. For operations: the Disputes API (dispute webhooks open cases, admins accept claims), Transaction Search (PayPal's statement matched against our books), fee breakdowns from captures and refunds, and lookups of every authorization, capture, refund, payout batch and invoice for reconciliation.
 - **PayPal Agent Toolkit:** It ships adapters for OpenAI Agents, LangChain and CrewAI. We wrote a Claude adapter over its shared layer, so the agent uses the toolkit's own tool definitions, parameter models and handlers for orders and invoicing.
 - **AI:** Claude with a forced tool call for quest drafts, and a tool-use loop with guarded tools for the quest agent.
 - **MCP:** Streamable HTTP server mounted on the API, with `list_quests`, `get_quest`, `hold_spot` and `check_my_spot`.
@@ -42,11 +45,13 @@ Sidequest adds a small fee to each share, collected only when a quest runs (`PLA
 - **The split has to be safe.** The hold is placed before anyone knows the group size. Holding at the minimum-group price and capturing at the final split means the capture is always at or below the authorization.
 - **Dropouts after charging.** After lock, a refund alone would raise everyone else's share. Standby members keep their holds after lock, so a swap is a capture plus a refund and nobody else's price changes.
 - **Agents and money.** We wanted the agent to be useful without being trusted with money. Every money move it suggests becomes a proposal that is re-validated against the live state at approval time.
+- **Who judges a dispute.** The first version let the host close reports about their own trip. Now a report or PayPal dispute goes to a Sidequest admin, the host can only reply, and every decision lands in an audit log.
 - **Trust in both directions.** Holds protect members from paying for a trip that never happens. A payout window and receipt checks protect them from a host who overcharges or doesn't show.
 
 ## Accomplishments
 
-- The full PayPal lifecycle in one product: authorize, capture, void, reauthorize, refund, invoice, payout and webhooks.
+- The full PayPal lifecycle in one product: authorize, capture, void, reauthorize, refund, invoice, payout, disputes and webhooks.
+- Books that reconcile against PayPal, with revenue net of PayPal's real fees.
 - A Claude adapter for the PayPal Agent Toolkit.
 - An MCP server that lets any AI assistant commit you to a plan without ever spending on its own.
 - A mock mode and demo personas, so judges can play every side of a quest alone in two minutes.
@@ -69,11 +74,12 @@ Authorization holds are an underused tool for coordination. A hold is a commitme
 3. Follow the five steps in the bar. Each one switches to the right person and runs the next PayPal action.
 4. Scroll to **Money log** to see every PayPal call with its ID.
 5. Open **My money** as Hon for the host desk. Press **Nudge** on Leo, then **Edit with Claude** and try **Nudge the oldest invoice**.
-6. **For AI agents** (footer): ask the assistant to find a quest and hold a spot. It uses the same MCP tools any AI assistant would, and you approve the hold on PayPal.
+6. **Admin**: open the person menu and pick **Kai**. Ask Claude about the kayak report, decide it, then check the Money, Payments, Fees and Audit log tabs.
+7. **For AI agents** (footer): ask the assistant to find a quest and hold a spot. It uses the same MCP tools any AI assistant would, and you approve the hold on PayPal.
 
 ## Built with
 
-PayPal Orders v2, PayPal Payments v2, PayPal Payouts, PayPal Invoicing, PayPal Agent Toolkit, PayPal JS SDK, PayPal Webhooks, Claude, Model Context Protocol, Render (web services, Postgres, Cron Jobs, Workflows), AG Studio, AG Grid, FastAPI, SQLAlchemy, Next.js, Tailwind CSS.
+PayPal Orders v2, PayPal Payments v2, PayPal Payouts, PayPal Invoicing, PayPal Disputes, PayPal Transaction Search, PayPal Agent Toolkit, PayPal JS SDK, PayPal Webhooks, Claude, Model Context Protocol, Render (web services, Postgres, Cron Jobs, Workflows), AG Studio, AG Grid, FastAPI, SQLAlchemy, Next.js, Tailwind CSS.
 
 ## Built during the submission period
 

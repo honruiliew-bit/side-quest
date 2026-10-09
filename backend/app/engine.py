@@ -13,6 +13,7 @@ Rules the agent cannot bend
   A refund is never above what was captured.
   Money only moves after the host approves a proposal, except for a person
   releasing their own uncaptured hold.
+  A report from a member pauses the payout until a Sidequest admin decides (cases.py).
 """
 
 from __future__ import annotations
@@ -21,7 +22,6 @@ import threading
 from collections import defaultdict
 from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
-from math import floor
 
 from sqlalchemy import func, select, update
 from sqlalchemy.orm import Session
@@ -30,7 +30,7 @@ from .config import settings
 from .models import Invoice, LedgerEntry, Membership, Message, Proposal, Quest, Receipt, User, aware, utcnow
 from .paypal.gateway import PayPalError, gateway_for, paypal_mode
 from .paypal import toolkit
-from .pricing import fmt, hold_cents, price_cents
+from .pricing import fmt, quest_fee, quest_price
 
 ACTIVE = {"pending", "held", "standby", "charged"}
 HONOR_PERIOD = timedelta(days=3)
@@ -74,13 +74,13 @@ def headcount(quest: Quest) -> int:
 
 
 def quest_hold(quest: Quest) -> int:
-    return hold_cents(quest.cost_lines, quest.min_people, quest.fee_bps)
+    return quest_price(quest, quest.min_people)
 
 
 def current_share(quest: Quest) -> int:
     """What each person pays if the quest locked right now."""
     n = max(headcount(quest), quest.min_people)
-    return price_cents(quest.cost_lines, min(n, quest.max_people), quest.fee_bps)
+    return quest_price(quest, min(n, quest.max_people))
 
 
 def membership_for(quest: Quest, user_id: str) -> Membership | None:
@@ -98,8 +98,14 @@ def _free_seat(quest: Quest) -> int | None:
 
 def log(db: Session, quest: Quest, kind: str, cents: int, *, membership: Membership | None = None,
         user: User | None = None, ref: str | None = None, note: str = "", provider: str | None = None,
-        raw: dict | None = None) -> LedgerEntry:
+        raw: dict | None = None, paypal_fee: int | None = None) -> LedgerEntry:
+    """Record a money event. Charges, refunds, payouts and invoice payments also record PayPal's fee."""
+    from .fees import paypal_fee_for
+
+    fee, source = paypal_fee_for(kind, cents, paypal_fee)
     entry = LedgerEntry(
+        fee_cents=fee or None,
+        fee_source=source if fee else None,
         quest_id=quest.id,
         membership_id=membership.id if membership else None,
         user_id=(user.id if user else membership.user_id if membership else None),
@@ -347,7 +353,8 @@ def lock(db: Session, quest: Quest, reason: str = "The host locked the quest.") 
         raise QuestError("A quest can only be locked once it is on.")
     people = seated(quest)
     n = len(people)
-    share = price_cents(quest.cost_lines, n, quest.fee_bps)
+    share = quest_price(quest, n)
+    fee = quest_fee(quest, n)
     charged, failed = [], []
     for m in people:
         if share > m.hold_cents:
@@ -368,9 +375,9 @@ def lock(db: Session, quest: Quest, reason: str = "The host locked the quest.") 
             log(db, quest, "decline", share, membership=m, ref=m.authorization_id, note=str(exc))
             failed.append(m)
             continue
-        m.status, m.capture_id, m.charged_cents = "charged", cap.capture_id, share
+        m.status, m.capture_id, m.charged_cents, m.fee_cents = "charged", cap.capture_id, share, fee
         log(db, quest, "charge", share, membership=m, ref=cap.capture_id,
-            note=f"{m.user.name} charged the final split", raw=cap.raw)
+            note=f"{m.user.name} charged the final split", raw=cap.raw, paypal_fee=cap.paypal_fee_cents)
         charged.append(m)
     quest.status = "locked"
     quest.locked_at = utcnow()
@@ -399,36 +406,17 @@ def payout_blocker(db: Session, quest: Quest) -> str | None:
     if quest.status != "locked":
         return "Only a locked quest can pay out."
     if quest.payout_paused_reason:
-        return f"The payout is paused: {quest.payout_paused_reason}"
+        return f"Paused while Sidequest reviews a report: {quest.payout_paused_reason}"
     if db.scalar(select(func.count(Proposal.id)).where(Proposal.quest_id == quest.id, Proposal.status == "pending")):
         return "There's a money change waiting for the host's approval."
     return None
 
 
-def report_problem(db: Session, quest: Quest, user: User, reason: str) -> None:
-    """Any member who paid can pause the payout. The host has to resolve it before money moves."""
-    if quest.status != "locked":
-        raise QuestError("You can report a problem after the quest is charged and before the host is paid.")
-    m = membership_for(quest, user.id)
-    if user.id != quest.host_id and not (m and m.status == "charged"):
-        raise QuestError("Only people who paid for this quest can pause the payout.", 403)
-    reason = reason.strip()[:280] or "No reason given"
-    quest.payout_paused_reason = f"{user.name}: {reason}"
-    quest.payout_paused_by = user.id
-    say(db, quest, f"{user.name} reported a problem: {reason}. The host's payout is paused until it's resolved.",
-        meta={"event": "problem"})
-    db.flush()
+def report_problem(db: Session, quest: Quest, user: User, reason: str):
+    """A member who paid opens a case. The payout waits until a Sidequest admin decides. See cases.py."""
+    from . import cases
 
-
-def resolve_problem(db: Session, quest: Quest, note: str = "") -> None:
-    if not quest.payout_paused_reason:
-        raise QuestError("There's no open problem on this quest.")
-    quest.payout_paused_reason = None
-    quest.payout_paused_by = None
-    tail = f" {note.strip()}" if note.strip() else ""
-    say(db, quest, f"{quest.host.name} resolved the problem.{tail} The payout is back on schedule.",
-        meta={"event": "resolved"})
-    db.flush()
+    return cases.report(db, quest, user, reason)
 
 
 def complete(db: Session, quest: Quest, reason: str = "The trip is over and nobody reported a problem.") -> dict:
@@ -438,24 +426,41 @@ def complete(db: Session, quest: Quest, reason: str = "The trip is over and nobo
         raise QuestError(blocker, 409)
     for m in standby(quest):
         release(db, m, note="Trip happened, standby hold released")
-    net = sum(m.charged_cents - m.refunded_cents for m in quest.memberships)
-    payout_cents = floor(net * 10_000 / (10_000 + quest.fee_bps)) if quest.fee_bps else net
+    db.flush()
+    result = pay_host_balance(db, quest, f"Payout for {quest.code} {quest.title}")
+    quest.status = "completed"
+    quest.completed_at = utcnow()
+    if result:
+        say(db, quest, f"{reason} {fmt(result['payout_cents'])} paid out to {quest.host.name} through PayPal Payouts.",
+            meta={"event": "completed"})
+    else:
+        say(db, quest, f"{reason} Nothing was left to pay out after refunds.", meta={"event": "completed"})
+    db.flush()
+    return result or {"payout_cents": 0, "batch_id": None}
+
+
+def pay_host_balance(db: Session, quest: Quest, note: str) -> dict | None:
+    """Send the host whatever Sidequest still holds for them: their share minus fees, plus any extra
+    costs members paid by invoice. Safe to call again later, it only ever sends the difference."""
+    from .fees import quest_money_db
+
+    owed = quest_money_db(db, quest).escrow_cents if quest.status in {"locked", "completed"} else 0
+    if owed <= 0:
+        return None
     providers = {m.provider for m in quest.memberships if m.charged_cents}
     gw = gateway_for("sim" if providers <= {"sim"} else "paypal")
     receiver = quest.host.payout_email or quest.host.email
+    paid_before = db.scalar(select(func.count(LedgerEntry.id)).where(LedgerEntry.quest_id == quest.id,
+                                                                    LedgerEntry.kind == "payout")) or 0
+    batch_ref = f"{quest.code}-{quest.id}" + (f"-{paid_before + 1}" if paid_before else "")
     try:
-        result = gw.payout(receiver, payout_cents, quest.currency,
-                           note=f"Payout for {quest.code} {quest.title}", batch_ref=f"{quest.code}-{quest.id}")
+        result = gw.payout(receiver, owed, quest.currency, note=note, batch_ref=batch_ref)
     except PayPalError as exc:
         raise QuestError(f"PayPal Payouts failed: {exc}", 502) from exc
-    log(db, quest, "payout", payout_cents, user=quest.host, ref=result.batch_id,
+    log(db, quest, "payout", owed, user=quest.host, ref=result.batch_id,
         provider=gw.name, note=f"Paid to {receiver}", raw=result.raw)
-    quest.status = "completed"
-    quest.completed_at = utcnow()
-    say(db, quest, f"{reason} {fmt(payout_cents)} paid out to {quest.host.name} through PayPal Payouts.",
-        meta={"event": "completed"})
     db.flush()
-    return {"payout_cents": payout_cents, "batch_id": result.batch_id}
+    return {"payout_cents": owed, "batch_id": result.batch_id}
 
 
 def cancel(db: Session, quest: Quest, reason: str) -> None:
@@ -484,7 +489,8 @@ def refund(db: Session, m: Membership, cents: int, note: str) -> None:
     m.refunded_cents += cents
     if m.refunded_cents >= m.charged_cents:
         m.status, m.seat = "refunded", None
-    log(db, m.quest, "refund", cents, membership=m, ref=result.refund_id, note=note, raw=result.raw)
+    log(db, m.quest, "refund", cents, membership=m, ref=result.refund_id, note=note, raw=result.raw,
+        paypal_fee=result.fee_returned_cents)
     db.flush()
 
 
@@ -501,12 +507,16 @@ def promote(db: Session, m: Membership) -> None:
         return
     if quest.status != "locked":
         raise QuestError("This quest is finished.")
-    share = max((x.charged_cents for x in seated(quest)), default=current_share(quest))
+    peers = [x for x in seated(quest) if x.charged_cents]
+    share = max((x.charged_cents for x in peers), default=current_share(quest))
     share = min(share, m.hold_cents)
+    fee = next((x.fee_cents for x in peers if x.charged_cents == share and x.fee_cents is not None), None)
     cap = _gateway(m).capture_authorization(m.authorization_id, share, quest.currency,
                                             note=f"{quest.code}: you moved up from standby")
     m.status, m.capture_id, m.charged_cents, m.seat = "charged", cap.capture_id, share, None
-    log(db, quest, "charge", share, membership=m, ref=cap.capture_id, note=f"{m.user.name} moved up from standby")
+    m.fee_cents = fee if fee is not None else quest_fee(quest, max(headcount(quest), quest.min_people))
+    log(db, quest, "charge", share, membership=m, ref=cap.capture_id, note=f"{m.user.name} moved up from standby",
+        paypal_fee=cap.paypal_fee_cents)
     db.flush()
 
 
@@ -981,6 +991,11 @@ def handle_webhook(db: Session, event: dict) -> str:
             return "unknown"
         mark_invoice(db, inv, "paid" if kind.endswith("PAID") else "cancelled", confirmed=True)
         return inv.status
+    if kind.startswith("CUSTOMER.DISPUTE."):
+        from . import cases
+
+        c = cases.from_paypal_dispute(db, res)
+        return f"case {c.status}" if c else "unknown"
     if kind.startswith("PAYMENT.PAYOUTS"):
         batch = (res.get("batch_header") or {}).get("payout_batch_id") or res.get("payout_batch_id")
         if batch:
@@ -1015,6 +1030,15 @@ def mark_invoice(db: Session, inv: Invoice, status: str, *, confirmed: bool = Fa
                     provider="sim" if inv.provider == "sim" else "toolkit", note=f"{inv.user.name} paid their invoice")
         entry.confirmed = confirmed
         say(db, quest, f"{inv.user.name} paid their {fmt(inv.cents)} invoice on PayPal.", meta={"event": "invoice_paid"})
+        if quest.status == "completed":
+            # The host was already paid for the trip. Pass this money on now instead of sitting on it.
+            db.flush()
+            try:
+                if pay_host_balance(db, quest, f"{inv.user.name}'s invoice for {quest.code}, passed on"):
+                    say(db, quest, f"Sidequest passed {inv.user.name}'s {fmt(inv.cents)} on to {quest.host.name} "
+                                   f"through PayPal Payouts.", meta={"event": "invoice_forwarded"})
+            except QuestError:
+                pass  # shows up as money owed to the host on the admin page
     elif status == "cancelled":
         say(db, quest, f"{inv.user.name}'s invoice was cancelled on PayPal.", meta={"event": "invoice_cancelled"})
 

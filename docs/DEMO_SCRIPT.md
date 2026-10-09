@@ -16,9 +16,9 @@ Judging weighs presentation equally with the other four criteria, and Best Demo 
 
 ## 0:30 to 1:05. The hero moment
 
-**Visual:** Open the invite link for Apple picking, the page a friend would get. Point at the faces, 1 seat to go, and "Up to $81.00". Click Hold, approve on PayPal's sandbox page. The full quest page opens: the board flips to IT'S ON, the stamp lands, the money route moves.
+**Visual:** Open the invite link for Apple picking, the page a friend would get. Point at the faces, 1 seat to go, and "Up to $86.36". Click Hold, approve on PayPal's sandbox page. The full quest page opens: the board flips to IT'S ON, the stamp lands, the money route moves.
 
-**Voice:** "That's a real PayPal authorization at the max price. Seat five just filled, so the quest is on. Two more people join..." (the tour bar adds them) "...and everyone's share drops from $81 to $67.29."
+**Voice:** "That's a real PayPal authorization at the max price. Seat five just filled, so the quest is on. Two more people join..." (the tour bar adds them) "...and everyone's share drops from $86.36 to $71.83."
 
 ## 1:05 to 1:25. Lock and charge
 
@@ -37,6 +37,8 @@ Judging weighs presentation equally with the other four criteria, and Best Demo 
 **Visual:** Add the gas receipt. Claude reads it: merchant, date, $95.00, Gas and tolls. Approve the invoices. Show the money route reaching Host paid.
 
 **Voice:** "Gas came in over. The host snaps the receipt, Claude reads and checks it, and everyone gets a PayPal invoice for their share with the receipt linked. The host is paid 24 hours after the trip, and anyone can pause that if something went wrong."
+
+**Optional cut (10 seconds, replaces part of the agentic commerce section if over time):** Switch to Kai, open Admin. The kayak report is waiting. Click Ask Claude, then refund Jules $20. "A report goes to Sidequest, never the host. Claude suggests a fix, staff approve it, and it's logged."
 
 ## 2:25 to 2:40. Agentic commerce
 

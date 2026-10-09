@@ -30,17 +30,21 @@ PERSONAS = [
     ("noor", "Noor", "noor@sidequest.demo", "#B8C7FF"),
 ]
 
+# Sidequest staff. Kept apart from PERSONAS so the demo crowd never adds an admin to a quest.
+ADMINS = [("kai", "Kai", "kai@sidequest.demo", "#FF8A5B")]
+
 COLORS = [p[3] for p in PERSONAS]
 
 
 def ensure_personas(db: Session) -> dict[str, User]:
     out = {}
-    for persona, name, email, color in PERSONAS:
+    for persona, name, email, color in PERSONAS + ADMINS:
         u = db.scalar(select(User).where(User.email == email))
         if not u:
             # Stable ids, so a saved session still works after the demo data is reset.
             u = User(id=f"usr_{persona}", name=name, email=email, color=color, is_demo=True, persona=persona)
             db.add(u)
+        u.is_admin = any(a[0] == persona for a in ADMINS)
         out[persona] = u
     db.flush()
     return out

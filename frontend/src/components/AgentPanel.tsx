@@ -14,7 +14,7 @@ const TOOL_LABEL: Record<string, string> = {
   leave_quest: "Handled leaving",
   propose_money_actions: "Sent to the host",
   add_stop_note: "Updated the plan",
-  report_problem: "Paused the payout",
+  report_problem: "Sent to a Sidequest admin",
   paypal_get_order_details: "PayPal Agent Toolkit: get_order_details",
   paypal_get_invoice: "PayPal Agent Toolkit: get_invoice",
 };

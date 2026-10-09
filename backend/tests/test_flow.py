@@ -10,6 +10,9 @@ if DB.exists():
 os.environ.update({
     "DATABASE_URL": f"sqlite:///{DB}",
     "PAYPAL_MODE": "mock",
+    # Amounts in these tests are the bare split. Fees have their own tests in test_admin.py.
+    "BOOKING_FEE_BPS": "0",
+    "BOOKING_FEE_FIXED_CENTS": "0",
     "ANTHROPIC_API_KEY": "",
     "DEMO_MODE": "1",
     "SEED_ON_START": "1",

@@ -15,11 +15,12 @@ import uuid
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from typing import Any
+from urllib.parse import urlencode
 
 import httpx
 
 from ..config import settings
-from ..pricing import to_value
+from ..pricing import from_value, to_value
 
 SANDBOX_BASE = "https://api-m.sandbox.paypal.com"
 
@@ -61,6 +62,7 @@ class CaptureResult:
     capture_id: str
     status: str
     raw: dict = field(default_factory=dict)
+    paypal_fee_cents: int | None = None  # what PayPal kept, from seller_receivable_breakdown
 
 
 @dataclass
@@ -68,6 +70,7 @@ class RefundResult:
     refund_id: str
     status: str
     raw: dict = field(default_factory=dict)
+    fee_returned_cents: int | None = None  # the part of PayPal's fee handed back, from seller_payable_breakdown
 
 
 @dataclass
@@ -75,6 +78,23 @@ class PayoutResult:
     batch_id: str
     status: str
     raw: dict = field(default_factory=dict)
+
+
+def money_cents(obj: dict | None) -> int | None:
+    """PayPal money objects look like {"currency_code": "USD", "value": "81.00"}."""
+    if not obj or obj.get("value") in (None, ""):
+        return None
+    return from_value(obj["value"])
+
+
+def estimate_capture_fee(cents: int) -> int:
+    """PayPal's US commercial rate, used when PayPal didn't report the fee (simulated payments)."""
+    return -(-cents * settings.paypal_fee_bps // 10_000) + settings.paypal_fee_fixed_cents if cents else 0
+
+
+def estimate_refund_fee_back(cents: int) -> int:
+    """On a refund PayPal returns the percentage part of its fee and keeps the fixed part."""
+    return cents * settings.paypal_fee_bps // 10_000
 
 
 def _paypal_id(n: int = 17) -> str:
@@ -134,6 +154,19 @@ class MockGateway:
 
     def verify_webhook(self, headers: dict, event: dict) -> bool:
         return True
+
+    # Audit and disputes. Simulated payments never reach PayPal, so there is nothing to look up.
+    def lookup(self, kind: str, ref: str) -> dict:
+        raise PayPalError("Simulated payment. It never reached PayPal.", 404)
+
+    def search_transactions(self, start: datetime, end: datetime) -> list[dict]:
+        raise PayPalError("PayPal is in mock mode, so there is no PayPal statement to compare against.")
+
+    def list_disputes(self) -> list[dict]:
+        return []
+
+    def accept_claim(self, dispute_id: str, note: str) -> dict:
+        return {"dispute_id": dispute_id, "status": "RESOLVED", "mock": True}
 
 
 class SandboxGateway:
@@ -274,7 +307,8 @@ class SandboxGateway:
             payload["invoice_id"] = invoice_id[:127]
         body = self._request("POST", f"/v2/payments/authorizations/{authorization_id}/capture", payload,
                              request_id=f"capture-{authorization_id}")
-        return CaptureResult(body["id"], body.get("status", ""), body)
+        fee = money_cents((body.get("seller_receivable_breakdown") or {}).get("paypal_fee"))
+        return CaptureResult(body["id"], body.get("status", ""), body, fee)
 
     def reauthorize(self, authorization_id: str, cents: int, currency: str) -> AuthResult:
         body = self._request("POST", f"/v2/payments/authorizations/{authorization_id}/reauthorize",
@@ -292,7 +326,8 @@ class SandboxGateway:
         if note:
             payload["note_to_payer"] = note[:255]
         body = self._request("POST", f"/v2/payments/captures/{capture_id}/refund", payload)
-        return RefundResult(body["id"], body.get("status", ""), body)
+        back = money_cents((body.get("seller_payable_breakdown") or {}).get("paypal_fee"))
+        return RefundResult(body["id"], body.get("status", ""), body, back)
 
     # Payouts v1 ---------------------------------------------------------
     def payout(self, receiver_email: str, cents: int, currency: str, note: str, batch_ref: str) -> PayoutResult:
@@ -312,6 +347,53 @@ class SandboxGateway:
         }, request_id=batch_ref, prefer_full=False)
         header = body.get("batch_header", {})
         return PayoutResult(header.get("payout_batch_id", ""), header.get("batch_status", ""), body)
+
+    # Audit: read back what PayPal has on record ------------------------
+    LOOKUP_PATHS = {
+        "hold": "/v2/payments/authorizations/{}",
+        "reauthorize": "/v2/payments/authorizations/{}",
+        "release": "/v2/payments/authorizations/{}",
+        "charge": "/v2/payments/captures/{}",
+        "refund": "/v2/payments/refunds/{}",
+        "payout": "/v1/payments/payouts/{}",
+        "invoice": "/v2/invoicing/invoices/{}",
+        "invoice_paid": "/v2/invoicing/invoices/{}",
+    }
+
+    def lookup(self, kind: str, ref: str) -> dict:
+        path = self.LOOKUP_PATHS.get(kind)
+        if not path:
+            raise PayPalError(f"Nothing to look up for a {kind} entry.")
+        return self._request("GET", path.format(ref), prefer_full=False)
+
+    def search_transactions(self, start: datetime, end: datetime) -> list[dict]:
+        """Transaction Search: PayPal's own statement. New sandbox transactions can take up to 3 hours to show."""
+        out: list[dict] = []
+        page, pages = 1, 1
+        while page <= pages and page <= 5:
+            q = urlencode({
+                "start_date": start.strftime("%Y-%m-%dT%H:%M:%S-0000"),
+                "end_date": end.strftime("%Y-%m-%dT%H:%M:%S-0000"),
+                "fields": "transaction_info,payer_info", "page_size": 100, "page": page,
+            })
+            body = self._request("GET", f"/v1/reporting/transactions?{q}", prefer_full=False)
+            out += body.get("transaction_details") or []
+            pages = int(body.get("total_pages") or 1)
+            page += 1
+        return out
+
+    # Disputes v1 -------------------------------------------------------
+    def list_disputes(self) -> list[dict]:
+        body = self._request("GET", "/v1/customer/disputes?page_size=50", prefer_full=False)
+        return body.get("items") or []
+
+    def get_dispute(self, dispute_id: str) -> dict:
+        return self._request("GET", f"/v1/customer/disputes/{dispute_id}", prefer_full=False)
+
+    def accept_claim(self, dispute_id: str, note: str) -> dict:
+        """Accept the buyer's claim. PayPal refunds the buyer from Sidequest's balance."""
+        return self._request("POST", f"/v1/customer/disputes/{dispute_id}/accept-claim",
+                             {"note": note[:2000]}, request_id=f"accept-{dispute_id}", prefer_full=False)
 
     # Webhooks -----------------------------------------------------------
     def verify_webhook(self, headers: dict, event: dict) -> bool:
