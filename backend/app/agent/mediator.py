@@ -43,7 +43,8 @@ Pick the smallest remedy that fixes the harm:
 - refund_reporter: only the reporter was harmed. Give the amount for them.
 - accept_claim: a PayPal dispute where the buyer is clearly right.
 - need_more_info: the host hasn't replied and the report is serious.
-Amounts are in cents. Never suggest more than was paid."""
+Write money in dollars, like $53.50, in every text field. Only refund_cents is a number of cents.
+Never suggest more than was paid. If something isn't clear, say exactly what to ask and whom."""
 
 
 def _context(db: Session, c: Case) -> str:
@@ -52,12 +53,18 @@ def _context(db: Session, c: Case) -> str:
     lines = [
         f"Quest {q.code}: {q.title}. Status {q.status}. Host {q.host.name}.",
         f"Planned costs: " + "; ".join(f"{l['label']} {fmt(int(l['cents']))} ({l['split']})" for l in q.cost_lines),
-        f"People who paid: " + "; ".join(f"{m.user.name} paid {m.charged_cents}c, refunded {m.refunded_cents}c"
+        f"People who paid: " + "; ".join(f"{m.user.name} paid {fmt(m.charged_cents)}, refunded {fmt(m.refunded_cents)}"
                                           for m in payers),
         f"Case from {'a PayPal dispute' if c.source == 'paypal' else 'a member report'}"
-        f" by {c.reporter.name if c.reporter else 'unknown'}, disputing {c.disputed_cents}c: {c.reason}",
+        f" by {c.reporter.name if c.reporter else 'unknown'}, disputing {fmt(c.disputed_cents)}: {c.reason}",
         f"Host's reply: {c.host_response or 'none yet'}",
     ]
+    from ..cases import thread
+
+    msgs = thread(db, c)
+    if msgs:
+        lines.append("Private thread between Sidequest, the host and the reporter, oldest first:")
+        lines += [f"- {m.author.name} ({m.role}): {m.body[:300]}" for m in msgs]
     receipts = db.scalars(select(Receipt).where(Receipt.quest_id == q.id, Receipt.status != "removed")).all()
     if receipts:
         lines.append("Receipts: " + "; ".join(
@@ -68,7 +75,7 @@ def _context(db: Session, c: Case) -> str:
     lines += [f"- {(m.user.name if m.user else m.role)}: {m.body[:240]}" for m in reversed(chat)]
     money = db.scalars(select(LedgerEntry).where(LedgerEntry.quest_id == q.id)).all()
     paid_out = sum(e.cents for e in money if e.kind == "payout")
-    lines.append(f"Already paid to host: {paid_out}c.")
+    lines.append(f"Already paid to host: {fmt(paid_out)}.")
     return "\n".join(lines)
 
 

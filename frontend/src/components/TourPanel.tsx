@@ -11,7 +11,7 @@ import { uploadReceipt } from "./Receipts";
 
 type Step = {
   id: string;
-  who: "leo" | "hon" | "dev" | "any";
+  who: string; // a demo persona, or "any"
   title: string;
   body: string;
   done: boolean;
@@ -21,6 +21,7 @@ type Step = {
 };
 
 const NAMES: Record<string, string> = { leo: "Leo", hon: "Hon", dev: "Dev" };
+const nameOf = (persona: string) => NAMES[persona] ?? persona.charAt(0).toUpperCase() + persona.slice(1);
 
 function scrollTo(id: string) {
   window.setTimeout(() => {
@@ -55,6 +56,10 @@ export function TourPanel({ q, onChange }: { q: QuestDetail; onChange: (q: Quest
   const swapPending = q.proposals.find(
     (p) => p.status === "pending" && p.actions.some((a) => a.type === "refund" && a.name === "Dev"),
   );
+  const swapOffered = q.proposals.find(
+    (p) => p.status === "offered" && p.actions.some((a) => a.type === "refund" && a.name === "Dev"),
+  );
+  const offeredTo = swapOffered ? q.standby.find((m) => m.id === swapOffered.result?.awaiting)?.user : undefined;
   const settlePending = q.proposals.find((p) => p.status === "pending" && p.actions.some((a) => a.type === "invoice"));
   const invoiced = q.ledger.some((e) => e.kind === "invoice");
   const hasReceipt = q.receipts.some((r) => r.status !== "removed" && r.status !== "rejected");
@@ -83,7 +88,16 @@ export function TourPanel({ q, onChange }: { q: QuestDetail; onChange: (q: Quest
         await post(`/quests/${q.id}/lock`);
       },
     },
-    swapPending
+    swapOffered && offeredTo?.persona
+      ? {
+          id: "swap", who: offeredTo.persona, title: "Someone drops out",
+          body: `${q.host.name} approved the swap, but Sidequest asks ${offeredTo.name} first. Nobody is charged or refunded until ${offeredTo.name} agrees to pay ${money(swapOffered.result?.cents ?? q.share_cents)}.`,
+          done: devRefunded, action: "Confirm the seat", target: "hold-spot",
+          run: async () => {
+            await post(`/proposals/${swapOffered.id}/seat`, { accept: true });
+          },
+        }
+      : swapPending
       ? {
           id: "swap", who: "hon", title: "Someone drops out",
           body: "Claude can't move money, so it asked the host. The card shows exactly what PayPal will do: charge the standby, refund Dev.",
@@ -139,7 +153,7 @@ export function TourPanel({ q, onChange }: { q: QuestDetail; onChange: (q: Quest
     try {
       if (s.who !== "any" && user?.persona !== s.who) {
         await signInAs(s.who);
-        toast(`You're now ${NAMES[s.who]}.`);
+        toast(`You're now ${nameOf(s.who)}.`);
       }
       if (s.run) await s.run();
       scrollTo(s.target);
@@ -161,7 +175,7 @@ export function TourPanel({ q, onChange }: { q: QuestDetail; onChange: (q: Quest
   }
 
   const label = (s: Step) =>
-    s.who !== "any" && user?.persona !== s.who ? `Be ${NAMES[s.who]}: ${s.action.toLowerCase()}` : s.action;
+    s.who !== "any" && user?.persona !== s.who ? `Be ${nameOf(s.who)}: ${s.action.toLowerCase()}` : s.action;
 
   return (
     <>
@@ -203,7 +217,7 @@ export function TourPanel({ q, onChange }: { q: QuestDetail; onChange: (q: Quest
               <div className="min-w-0 flex-1">
                 <div className="text-[15px] font-bold">
                   <span className="text-muted">Step {index + 1} of {steps.length}.</span> {current.title}
-                  {current.who !== "any" && <span className="ml-2 text-[12px] font-semibold text-muted">as {NAMES[current.who]}</span>}
+                  {current.who !== "any" && <span className="ml-2 text-[12px] font-semibold text-muted">as {nameOf(current.who)}</span>}
                 </div>
                 <p className="mt-1 text-[14px] leading-snug">{current.body}</p>
                 {current.id === "hold" && config?.demo_buyer && (

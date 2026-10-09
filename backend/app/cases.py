@@ -17,9 +17,9 @@ Claude can read a case and suggest a decision. It can't make one.
 from __future__ import annotations
 
 from sqlalchemy import select
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, object_session
 
-from .models import AuditLog, Case, LedgerEntry, Membership, Quest, User, utcnow
+from .models import AuditLog, Case, CaseMessage, LedgerEntry, Membership, Quest, User, utcnow
 from .pricing import fmt
 
 DECISIONS = {"release", "refund_reporter", "split_refund", "refund_everyone", "accept_claim"}
@@ -119,6 +119,8 @@ def respond(db: Session, c: Case, user: User, text: str) -> Case:
     if len(text) < 3:
         raise QuestError("Write a short reply.")
     c.host_response, c.host_responded_at = text, utcnow()
+    db.add(CaseMessage(case_id=c.id, author_id=user.id, role="host", to="admin", body=text,
+                       created_at=c.host_responded_at))
     say(db, quest, f"{user.name} replied to {_who(c)}'s report. A Sidequest admin will decide.",
         meta={"event": "case_reply", "case": c.id})
     audit(db, user, "host_reply", c.id, f"{user.name} replied on {quest.code}: {text}")
@@ -236,6 +238,70 @@ def resolve(db: Session, c: Case, admin: User, decision: str, refund_cents_each:
     return c
 
 
+# --- Asking questions -------------------------------------------------------------------------
+
+def role_in(c: Case, user: User | None) -> str | None:
+    """Who this person is on the case: admin, host, reporter, or nobody."""
+    if not user:
+        return None
+    if user.is_admin:
+        return "admin"
+    if user.id == c.quest.host_id:
+        return "host"
+    if user.id == c.opened_by:
+        return "reporter"
+    return None
+
+
+def thread(db: Session, c: Case) -> list[CaseMessage]:
+    return list(db.scalars(select(CaseMessage).where(CaseMessage.case_id == c.id).order_by(CaseMessage.created_at)))
+
+
+def waiting_on(c: Case, messages: list[CaseMessage]) -> list[str]:
+    """Which parties the admin asked something and hasn't heard back from since."""
+    waiting: set[str] = set()
+    for m in messages:
+        if m.role == "admin":
+            waiting = {"host", "reporter"} if m.to == "both" else {m.to}
+        else:
+            waiting.discard(m.role)
+    return sorted(waiting)
+
+
+def post_message(db: Session, c: Case, user: User, body: str, to: str = "admin") -> CaseMessage:
+    from .engine import QuestError
+
+    role = role_in(c, user)
+    if not role:
+        raise QuestError("Only Sidequest, the host and the person who reported can see this thread.", 403)
+    if c.status != "open":
+        raise QuestError("This case is closed.", 409)
+    body = body.strip()[:1000]
+    if len(body) < 2:
+        raise QuestError("Write a message first.")
+    if role == "admin":
+        if to not in {"host", "reporter", "both"}:
+            raise QuestError("Choose who the question is for.")
+    else:
+        to = "admin"
+    msg = CaseMessage(case_id=c.id, author_id=user.id, role=role, to=to, body=body)
+    db.add(msg)
+    if role == "host" and not c.host_response:
+        c.host_response, c.host_responded_at = body, utcnow()
+    target = {"host": c.quest.host.name, "reporter": c.reporter.name if c.reporter else "the reporter",
+              "both": "both sides", "admin": "Sidequest"}[to]
+    audit(db, user, "case_message", c.id, f"{user.name} to {target} on {c.quest.code}: {body[:200]}")
+    db.flush()
+    return msg
+
+
+def message_out(m: CaseMessage) -> dict:
+    from .views import iso, user_out
+
+    return {"id": m.id, "role": m.role, "to": m.to, "body": m.body, "author": user_out(m.author),
+            "created_at": iso(m.created_at)}
+
+
 # --- PayPal disputes ------------------------------------------------------------------------
 
 def _seller_txn(d: dict) -> str | None:
@@ -335,4 +401,8 @@ def case_out(c: Case, full: bool = False) -> dict:
                   "host": user_out(q.host), "tz": q.tz},
         "ai_review": _review(c),
     }
+    if full:
+        msgs = thread(object_session(c), c)
+        out["messages"] = [message_out(m) for m in msgs]
+        out["waiting_on"] = waiting_on(c, msgs)
     return out

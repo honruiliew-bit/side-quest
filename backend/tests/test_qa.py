@@ -343,3 +343,45 @@ def test_tour_accepts_the_official_sample_receipt_but_real_quests_do_not(client)
         host = db.get(User, real.host_id)
         r2 = engine.add_receipt(db, real, host, "sample.png", "image/png", b"\x89PNGsample-real", pre_read=(claude_says, None))
         assert r2.status == "rejected" and any("SAMPLE" in i for i in r2.issues)
+
+
+def test_standby_can_turn_down_a_seat_and_the_host_gets_a_new_choice(client):
+    qid = client.post("/demo/tour").json()["id"]
+    hon = login(client, "hon")
+    client.post(f"/demo/quests/{qid}/crowd", json={"count": 4}, headers=hon)  # 7 seats and one on standby
+    d = client.post(f"/quests/{qid}/lock", headers=hon).json()
+    standby = d["standby"][0]["user"]
+    d = client.post(f"/quests/{qid}/leave", headers=login(client, "dev")).json()["quest"]
+    swap = next(p for p in d["proposals"] if p["status"] == "pending")
+    d = client.post(f"/proposals/{swap['id']}/decide", json={"approve": True}, headers=hon).json()
+    assert d["payout"]["blocker"] and "standby" in d["payout"]["blocker"]
+    d = client.post(f"/proposals/{swap['id']}/seat", json={"accept": False}, headers=login(client, standby["persona"])).json()
+    assert next(p for p in d["proposals"] if p["id"] == swap["id"])["status"] == "declined"
+    assert any(e["kind"] == "release" and e["user"]["name"] == standby["name"] for e in d["ledger"])
+    # Nobody else is on standby, so the host now decides on a plain refund for Dev.
+    fresh = [p for p in d["proposals"] if p["status"] == "pending"]
+    assert fresh and fresh[0]["title"] == "Refund Dev"
+    assert not any(e["kind"] == "refund" for e in d["ledger"])
+
+
+def test_unanswered_seat_offer_lapses(client):
+    from datetime import timedelta
+
+    from app.db import session_scope
+    from app.engine import tick
+    from app.models import Proposal, utcnow
+
+    qid = client.post("/demo/tour").json()["id"]
+    hon = login(client, "hon")
+    client.post(f"/demo/quests/{qid}/crowd", json={"count": 4}, headers=hon)
+    client.post(f"/quests/{qid}/lock", headers=hon)
+    d = client.post(f"/quests/{qid}/leave", headers=login(client, "dev")).json()["quest"]
+    swap = next(p for p in d["proposals"] if p["status"] == "pending")
+    client.post(f"/proposals/{swap['id']}/decide", json={"approve": True}, headers=hon)
+    with session_scope() as db:
+        db.get(Proposal, swap["id"]).decided_at = utcnow() - timedelta(hours=13)
+    with session_scope() as db:
+        tick(db)
+    d = client.get(f"/quests/{qid}").json()
+    assert next(p for p in d["proposals"] if p["id"] == swap["id"])["status"] == "declined"
+    assert any("didn't confirm the seat in time" in m["body"] for m in d["messages"])

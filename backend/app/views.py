@@ -161,12 +161,7 @@ def quest_detail(db: Session, q: Quest, viewer: User | None, expose_ids: bool = 
             "blocker": payout_blocker(db, q) if q.status == "locked" else None,
             "hold_hours": settings.payout_hold_hours,
         },
-        "cases": [{
-            "id": c.id, "status": c.status, "source": c.source, "reason": c.reason, "reporter": user_out(c.reporter),
-            "host_response": c.host_response, "decision": c.decision, "resolution_note": c.resolution_note,
-            "created_at": iso(c.created_at), "resolved_at": iso(c.resolved_at),
-            "mine": bool(viewer and c.opened_by == viewer.id),
-        } for c in quest_cases],
+        "cases": [_case_view(db, c, viewer) for c in quest_cases],
         "timestamps": {
             "tipped_at": iso(q.tipped_at), "locked_at": iso(q.locked_at),
             "completed_at": iso(q.completed_at), "cancelled_at": iso(q.cancelled_at),
@@ -174,6 +169,23 @@ def quest_detail(db: Session, q: Quest, viewer: User | None, expose_ids: bool = 
         "paypal_mode": paypal_mode(),
         "host_stats": host_stats,
     })
+    return out
+
+
+def _case_view(db: Session, c: Case, viewer: User | None) -> dict:
+    from . import cases
+
+    out = {
+        "id": c.id, "status": c.status, "source": c.source, "reason": c.reason, "reporter": user_out(c.reporter),
+        "host_response": c.host_response, "decision": c.decision, "resolution_note": c.resolution_note,
+        "created_at": iso(c.created_at), "resolved_at": iso(c.resolved_at),
+        "mine": bool(viewer and c.opened_by == viewer.id), "my_role": cases.role_in(c, viewer),
+        "messages": [], "waiting_on": [],
+    }
+    if out["my_role"]:  # the thread is private to the admin, the host and the person who reported
+        msgs = cases.thread(db, c)
+        out["messages"] = [cases.message_out(m) for m in msgs]
+        out["waiting_on"] = cases.waiting_on(c, msgs)
     return out
 
 

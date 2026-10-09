@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
 import { Avatar } from "@/components/Avatar";
+import { Bubble } from "@/components/CaseThread";
 import { EVENT } from "@/lib/ledger";
 import { api } from "@/lib/api";
 import { money, relative, timeAgo } from "@/lib/format";
@@ -103,6 +104,10 @@ function CaseList({ rows, openId, onOpen }: { rows: AdminCase[]; openId: string 
                 <span className="font-bold">{c.reporter?.name ?? "Unknown"}</span>
                 <span className="text-[13px] text-muted">on {c.quest.code}</span>
                 {c.source === "paypal" && <span className="chip chip-held">PayPal dispute</span>}
+                {c.status === "open" && c.waiting_on.length > 0 && <span className="chip chip-sim">Asked, no reply yet</span>}
+                {c.status === "open" && c.waiting_on.length === 0 && c.messages.length > 0 && c.messages[c.messages.length - 1].role !== "admin" && (
+                  <span className="chip chip-refund">New reply</span>
+                )}
               </span>
               <span className="mt-1 line-clamp-2 block text-[14px]">{c.reason}</span>
               <span className="mt-1 block text-[12px] text-muted">
@@ -120,6 +125,8 @@ function CaseView({ id, onDecided }: { id: string; onDecided: () => void }) {
   const { toast } = useSession();
   const [c, setC] = useState<CaseDetail | null>(null);
   const [reviewing, setReviewing] = useState(false);
+  const [draft, setDraft] = useState("");
+  const [to, setTo] = useState<"host" | "reporter" | "both">("both");
 
   const load = useCallback(() => {
     api<CaseDetail>(`/admin/cases/${id}`).then(setC).catch((e) => toast(e.message, "error"));
@@ -173,11 +180,17 @@ function CaseView({ id, onDecided }: { id: string; onDecided: () => void }) {
         <Side who={c.reporter?.name ?? "The member"} user={c.reporter} label={c.source === "paypal" ? "Told PayPal" : "Reported"} when={c.created_at} tz={tz}
           text={c.reason} foot={reporterPaid ? `Paid ${money(reporterPaid.charged_cents - reporterPaid.refunded_cents)}` : `Disputing ${money(c.disputed_cents)}`} />
         <Side who={q.host.name} user={q.host} label="Host's side" when={c.host_responded_at} tz={tz}
-          text={c.host_response ?? (c.source === "paypal" ? "No reply. PayPal disputes come straight to Sidequest." : "No reply yet.")}
+          text={c.host_response ?? "No reply yet. Ask below."}
           muted={!c.host_response} />
       </section>
 
-      <AiBox c={c} reviewing={reviewing} onReview={review} />
+      <Thread c={c} draft={draft} setDraft={setDraft} to={to} setTo={setTo} onSent={(next) => { setC(next); onDecided(); }} />
+
+      <AiBox c={c} reviewing={reviewing} onReview={review} onAsk={(text) => {
+        setDraft(text);
+        setTo("both");
+        document.getElementById("thread-h")?.scrollIntoView({ behavior: "smooth", block: "start" });
+      }} />
 
       {c.status === "open" ? (
         <DecisionForm c={c} onDone={(next) => { setC(next); onDecided(); }} />
@@ -219,7 +232,63 @@ function list(v: unknown): string[] {
   return Array.isArray(v) ? v.map(String) : typeof v === "string" && v.trim() ? [v] : [];
 }
 
-function AiBox({ c, reviewing, onReview }: { c: CaseDetail; reviewing: boolean; onReview: () => void }) {
+function Thread({ c, draft, setDraft, to, setTo, onSent }: {
+  c: CaseDetail; draft: string; setDraft: (v: string) => void; to: "host" | "reporter" | "both";
+  setTo: (v: "host" | "reporter" | "both") => void; onSent: (c: CaseDetail) => void;
+}) {
+  const { toast } = useSession();
+  const [busy, setBusy] = useState(false);
+  const reporter = c.reporter?.name ?? "The reporter";
+  const host = c.quest.host.name;
+  const names = { host, reporter, both: "Both" };
+  const send = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setBusy(true);
+    try {
+      onSent(await api<CaseDetail>(`/admin/cases/${c.id}/messages`, { method: "POST", json: { body: draft, to } }));
+      setDraft("");
+      toast(`Sent to ${to === "both" ? `${host} and ${reporter}` : names[to]}. They see it on the quest page.`);
+    } catch (err) {
+      toast(err instanceof Error ? err.message : "That didn't send.", "error");
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <section className="panel flex flex-col gap-3 p-5" aria-labelledby="thread-h">
+      <div className="flex flex-wrap items-baseline justify-between gap-2">
+        <h3 id="thread-h" className="h3 scroll-mt-24">Ask for details</h3>
+        {c.waiting_on.length > 0 && (
+          <span className="chip chip-refund">Waiting on {c.waiting_on.map((r) => (r === "host" ? host : reporter)).join(" and ")}</span>
+        )}
+      </div>
+      <p className="text-[13px] text-muted">Private to Sidequest, {host} and {reporter}. Not posted in the group chat. They reply from the quest page.</p>
+      {c.messages.length > 0 && (
+        <ol className="flex flex-col gap-2">{c.messages.map((m) => <Bubble key={m.id} m={m} tz={c.quest.tz} />)}</ol>
+      )}
+      {c.status === "open" && (
+        <form onSubmit={send} className="flex flex-col gap-2">
+          <div role="radiogroup" aria-label="Send to" className="flex flex-wrap gap-2">
+            {(["host", "reporter", "both"] as const).map((k) => (
+              <button key={k} type="button" role="radio" aria-checked={to === k} onClick={() => setTo(k)}
+                className={`border-2 border-ink px-3 py-1 text-[14px] font-semibold ${to === k ? "bg-ink text-stock" : "bg-stock hover:bg-white"}`}>
+                {k === "both" ? "Both" : names[k]}{k === "host" ? " (host)" : ""}
+              </button>
+            ))}
+          </div>
+          <label htmlFor="ask-input" className="sr-only">Message</label>
+          <textarea id="ask-input" className="field" rows={3} value={draft} onChange={(e) => setDraft(e.target.value)} minLength={2} required
+            placeholder={`What do you need to know? For example: "Was the lobster stop in the plan you shared?"`} />
+          <button className="btn btn-ink btn-sm self-start" disabled={busy || draft.trim().length < 2} type="submit">
+            {busy ? "Sending..." : `Send to ${to === "both" ? "both" : names[to]}`}
+          </button>
+        </form>
+      )}
+    </section>
+  );
+}
+
+function AiBox({ c, reviewing, onReview, onAsk }: { c: CaseDetail; reviewing: boolean; onReview: () => void; onAsk: (text: string) => void }) {
   const raw = c.ai_review;
   const r = raw ? { ...raw, facts: list(raw.facts), missing: list(raw.missing), refund_cents: Number(raw.refund_cents) || 0 } : null;
   return (
@@ -255,6 +324,12 @@ function AiBox({ c, reviewing, onReview }: { c: CaseDetail; reviewing: boolean; 
             {r.refund_cents > 0 && <> ({r.decision === "split_refund" ? `${money(r.refund_cents)} split across everyone` : money(r.refund_cents)})</>}.
             {r.reasoning && <> {r.reasoning}</>}
           </p>
+          {c.status === "open" && r.missing.length > 0 && (
+            <button type="button" className="btn btn-ghost btn-sm self-start" onClick={() => onAsk(
+              `To help us decide, can you tell us:\n${r.missing.map((m) => `- ${m}`).join("\n")}`)}>
+              Ask both sides about this
+            </button>
+          )}
           {r.source === "offline" && <p className="text-[13px] text-muted">Claude is off on this server, so this is a simple rule of thumb.</p>}
         </div>
       )}

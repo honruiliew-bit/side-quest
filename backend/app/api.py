@@ -155,9 +155,25 @@ def me(user: User = Depends(require_user), db: Session = Depends(get_db)):
                          .order_by(Quest.starts_at)).all()
     return {
         "user": user_out(user),
+        "questions": _open_questions(db, user),
         "memberships": [{**membership_out(m), "quest": quest_card(m.quest)} for m in rows],
         "hosting": [quest_card(q) for q in hosting],
     }
+
+
+def _open_questions(db: Session, user: User) -> list[dict]:
+    """Cases where Sidequest asked this person something and is waiting on their answer."""
+    out = []
+    mine = db.scalars(select(Case).join(Quest, Quest.id == Case.quest_id).where(
+        Case.status == "open", or_(Case.opened_by == user.id, Quest.host_id == user.id))).all()
+    for c in mine:
+        role = cases.role_in(c, user)
+        msgs = cases.thread(db, c)
+        if role in cases.waiting_on(c, msgs):
+            last = next(m for m in reversed(msgs) if m.role == "admin")
+            out.append({"case_id": c.id, "quest_id": c.quest_id, "quest_title": c.quest.title,
+                        "from": last.author.name, "body": last.body})
+    return out
 
 
 @router.get("/me/ledger")
@@ -455,6 +471,33 @@ def decide(proposal_id: str, body: DecideIn, user: User = Depends(require_user),
     with locked(db, p.quest_id) as q:
         _host_only(q, user)
         engine.decide_proposal(db, db.get(Proposal, proposal_id), body.approve)
+    return _detail(db, q, user)
+
+
+class CaseMessageIn(BaseModel):
+    body: str = Field(min_length=2, max_length=1000)
+
+
+@router.post("/cases/{case_id}/messages")
+def reply_on_case(case_id: str, body: CaseMessageIn, user: User = Depends(require_user), db: Session = Depends(get_db)):
+    """The host or the person who reported answers Sidequest in the case's private thread."""
+    with locked(db, _case_quest(db, case_id)) as q:
+        cases.post_message(db, db.get(Case, case_id), user, body.body)
+    return _detail(db, q, user)
+
+
+class SeatIn(BaseModel):
+    accept: bool
+
+
+@router.post("/proposals/{proposal_id}/seat")
+def answer_seat(proposal_id: str, body: SeatIn, user: User = Depends(require_user), db: Session = Depends(get_db)):
+    """The person on standby confirms or turns down a seat the host offered them. Nobody is charged before this."""
+    p = db.get(Proposal, proposal_id)
+    if not p:
+        raise HTTPException(404, "That offer doesn't exist.")
+    with locked(db, p.quest_id) as q:
+        engine.respond_to_offer(db, db.get(Proposal, proposal_id), user, body.accept)
     return _detail(db, q, user)
 
 

@@ -106,7 +106,13 @@ def test_full_lifecycle(client):
     # Leo can't approve his own refund.
     assert client.post(f"/proposals/{pending[0]['id']}/decide", json={"approve": True}, headers=leo).status_code == 403
     d = client.post(f"/proposals/{pending[0]['id']}/decide", json={"approve": True}, headers=hon).json()
-    assert [p for p in d["proposals"] if p["id"] == pending[0]["id"]][0]["status"] == "executed"
+    # The host's yes isn't enough: the person on standby has to agree to pay before anything moves.
+    assert [p for p in d["proposals"] if p["id"] == pending[0]["id"]][0]["status"] == "offered"
+    assert d["money"]["refunded_cents"] == 0 and standby_name not in [s["member"]["user"]["name"] for s in d["seats"] if s["member"]]
+    pid = pending[0]["id"]
+    assert client.post(f"/proposals/{pid}/seat", json={"accept": True}, headers=hon).status_code == 403
+    d = client.post(f"/proposals/{pid}/seat", json={"accept": True}, headers=login(client, standby_name.lower())).json()
+    assert [p for p in d["proposals"] if p["id"] == pid][0]["status"] == "executed"
     names = [s["member"]["user"]["name"] for s in d["seats"] if s["member"]]
     assert "Leo" not in names and standby_name in names and len(names) == 7
     assert d["money"]["refunded_cents"] == 6729
@@ -226,6 +232,9 @@ def test_proposal_runs_once_and_duplicates_collapse(client):
     assert client.post(f"/proposals/{pid}/decide", json={"approve": True}, headers=ana).status_code == 200
     second = client.post(f"/proposals/{pid}/decide", json={"approve": True}, headers=ana)
     assert second.status_code == 409
+    leo_h = login(client, "leo")
+    assert client.post(f"/proposals/{pid}/seat", json={"accept": True}, headers=leo_h).status_code == 200
+    assert client.post(f"/proposals/{pid}/seat", json={"accept": True}, headers=leo_h).status_code == 409
     d = client.get(f"/quests/{hh['id']}").json()
     assert sum(1 for e in d["ledger"] if e["kind"] == "refund") == 1
     assert sum(1 for e in d["ledger"] if e["kind"] == "charge" and e["user"]["name"] == "Leo") == 1

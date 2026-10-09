@@ -44,7 +44,8 @@ export function AgentPanel({ q, onChange }: { q: QuestDetail; onChange: (q: Ques
   const box = useRef<HTMLDivElement>(null);
   const isHost = q.viewer.role === "host";
   const pending = q.proposals.filter((p) => p.status === "pending");
-  const decided = q.proposals.filter((p) => p.status !== "pending").slice(0, 3);
+  const offered = q.proposals.filter((p) => p.status === "offered");
+  const decided = q.proposals.filter((p) => p.status !== "pending" && p.status !== "offered").slice(0, 3);
   const msgs = q.messages.slice(-40);
 
   useEffect(() => {
@@ -77,6 +78,7 @@ export function AgentPanel({ q, onChange }: { q: QuestDetail; onChange: (q: Ques
       onChange(detail);
       const after = detail.proposals.find((x) => x.id === p.id);
       if (after?.status === "failed") toast(after.result?.error ?? "Stopped partway.", "error");
+      else if (after?.status === "offered") toast(`Approved. Waiting for ${after.result?.name ?? "them"} to confirm the seat.`);
       else toast(approve ? "Approved. Done on PayPal." : "Declined.", approve ? "money" : "info");
     } catch (e) {
       toast(e instanceof Error ? e.message : "That didn't work.", "error");
@@ -101,6 +103,19 @@ export function AgentPanel({ q, onChange }: { q: QuestDetail; onChange: (q: Ques
           {config?.ai === "claude" ? "Claude" : "Offline mode"}
         </span>
       </div>
+
+      {offered.map((p) => (
+        <div key={p.id} className="overflow-hidden rounded border-2 border-ink">
+          <div className="bg-paper px-4 py-2 font-bold">Waiting on {p.result?.name ?? "the person on standby"} to confirm</div>
+          <div className="flex flex-col gap-2 bg-white p-4 text-[15px]">
+            <div className="font-bold">{p.title}</div>
+            <p>
+              {q.host.name} approved. {p.result?.name} has to agree to pay {money(p.result?.cents ?? 0)} before anyone is charged or
+              refunded. If they say no or don&apos;t answer within 12 hours, their hold is released and {q.host.name} decides again.
+            </p>
+          </div>
+        </div>
+      ))}
 
       {pending.map((p) => (
         <div key={p.id} className="overflow-hidden rounded border-2 border-ink">
@@ -127,7 +142,7 @@ export function AgentPanel({ q, onChange }: { q: QuestDetail; onChange: (q: Ques
             {isHost && (
               <div className="flex flex-wrap gap-2">
                 <button className="btn btn-ink btn-sm" disabled={!!deciding} onClick={() => decide(p, true)}>
-                  {deciding === p.id ? "Running on PayPal" : "Approve and run"}
+                  {deciding === p.id ? "Running on PayPal" : p.actions.some((a) => a.type === "promote") && q.status === "locked" ? "Approve and ask them" : "Approve and run"}
                 </button>
                 <button className="btn btn-ghost btn-sm" disabled={!!deciding} onClick={() => decide(p, false)}>Decline</button>
               </div>
@@ -183,7 +198,7 @@ export function AgentPanel({ q, onChange }: { q: QuestDetail; onChange: (q: Ques
               <li key={p.id} className="flex justify-between gap-3">
                 <span>{p.title}</span>
                 <span className={p.status === "executed" ? "font-semibold text-money" : "text-muted"}>
-                  {p.status === "executed" ? "Done on PayPal" : p.status === "failed" ? "Stopped" : p.status === "expired" ? "No longer needed" : "Declined"}
+                  {p.status === "executed" ? "Done on PayPal" : p.status === "failed" ? "Stopped" : p.status === "expired" ? "No longer needed" : p.result?.declined_by ? `${p.result.declined_by} said no` : "Declined"}
                 </span>
               </li>
             ))}

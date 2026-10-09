@@ -80,7 +80,7 @@ def list_cases(status: str = "all", admin: User = Depends(require_admin), db: Se
     stmt = select(Case).order_by(Case.created_at.desc()).limit(200)
     if status != "all":
         stmt = stmt.where(Case.status == status)
-    return [cases.case_out(c) for c in db.scalars(stmt)]
+    return [cases.case_out(c, full=True) for c in db.scalars(stmt)]
 
 
 def _case(db: Session, case_id: str) -> Case:
@@ -96,7 +96,7 @@ def _case_detail(db: Session, c: Case) -> dict:
     chat = db.scalars(select(Message).where(Message.quest_id == q.id).order_by(Message.created_at.desc()).limit(40)).all()
     receipts = db.scalars(select(Receipt).where(Receipt.quest_id == q.id, Receipt.status != "removed")).all()
     return {
-        **cases.case_out(c),
+        **cases.case_out(c, full=True),
         "money": fees.quest_money(q, entries).out(),
         "host_paid": any(m.user_id == q.host_id and m.charged_cents for m in q.memberships),
         "payout_due_at": iso(engine.payout_due_at(q)),
@@ -128,6 +128,20 @@ def review_case(case_id: str, admin: User = Depends(require_admin), db: Session 
         raise HTTPException(502, f"Claude couldn't review this case right now ({type(exc).__name__}). Decide from the records.")
     cases.audit(db, admin, "case_review", c.id, f"{admin.name} asked Claude to review a case on {c.quest.code}. "
                                                 f"Claude suggested: {c.ai_review.get('decision')}.")
+    db.commit()
+    return _case_detail(db, c)
+
+
+class MessageIn(BaseModel):
+    body: str = Field(min_length=2, max_length=1000)
+    to: str = Field(pattern="^(host|reporter|both)$")
+
+
+@router.post("/cases/{case_id}/messages")
+def message_case(case_id: str, body: MessageIn, admin: User = Depends(require_admin), db: Session = Depends(get_db)):
+    """Ask the host, the person who reported, or both. The thread is private to them and Sidequest."""
+    c = _case(db, case_id)
+    cases.post_message(db, c, admin, body.body, body.to)
     db.commit()
     return _case_detail(db, c)
 

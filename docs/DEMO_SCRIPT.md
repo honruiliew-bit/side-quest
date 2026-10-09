@@ -30,7 +30,7 @@ Judging weighs presentation equally with the other four criteria, and Best Demo 
 
 **Visual:** Breakneck Ridge. As Dev, type "I'm sick, I can't make it Saturday." The agent replies. Switch to Ana. The proposal card lists the exact PayPal operations. Approve.
 
-**Voice:** "The agent runs the group chat. Dev drops out after everyone's been charged. The agent can't move money by itself, so it proposes a swap: capture Leo's standby hold, refund Dev. The host sees exactly what will run on PayPal and approves it in one tap."
+**Voice:** "The agent runs the group chat. Dev drops out after everyone's been charged. The agent can't move money by itself, so it proposes a swap: capture Leo's standby hold, refund Dev. The host sees exactly what will run on PayPal and approves. Then Leo, first on standby, confirms he'll pay before anyone is charged."
 
 ## 2:05 to 2:25. Settle up and payout
 

@@ -1,4 +1,4 @@
-import type { LedgerKind, Membership, Receipt, UserLite } from "@/lib/types";
+import type { CaseMessage, LedgerKind, Membership, Receipt, UserLite } from "@/lib/types";
 
 export type QuestMoney = {
   gross_cents: number;
@@ -71,6 +71,8 @@ export type AdminCase = {
   created_at: string;
   quest: { id: string; code: string; title: string; status: string; line_code: string; host: UserLite; tz: string };
   ai_review: AiReview | null;
+  messages: CaseMessage[];
+  waiting_on: ("host" | "reporter")[];
 };
 
 export type CaseDetail = AdminCase & {

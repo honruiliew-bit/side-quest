@@ -110,8 +110,9 @@ export type Proposal = {
   title: string;
   rationale: string;
   actions: ProposalAction[];
-  status: "pending" | "running" | "executed" | "declined" | "failed" | "expired";
-  result: { done?: { type: string; name: string }[]; error?: string } | null;
+  status: "pending" | "offered" | "running" | "executed" | "declined" | "failed" | "expired";
+  // offered: the host said yes to a swap and the person on standby has to confirm before anyone is charged.
+  result: { done?: { type: string; name: string }[]; error?: string; awaiting?: string; name?: string; cents?: number; declined_by?: string } | null;
   evidence: Receipt[];
   created_at: string;
 };
@@ -154,6 +155,19 @@ export type QuestCase = {
   created_at: string;
   resolved_at: string | null;
   mine: boolean;
+  my_role: "admin" | "host" | "reporter" | null;
+  // Private thread between Sidequest, the host and the person who reported. Empty for anyone else.
+  messages: CaseMessage[];
+  waiting_on: ("host" | "reporter")[];
+};
+
+export type CaseMessage = {
+  id: string;
+  role: "admin" | "host" | "reporter";
+  to: "host" | "reporter" | "both" | "admin";
+  body: string;
+  author: UserLite;
+  created_at: string;
 };
 
 export type AppConfig = {

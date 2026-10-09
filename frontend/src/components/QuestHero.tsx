@@ -8,6 +8,7 @@ import type { QuestDetail } from "@/lib/types";
 import { LineBullet } from "./Avatar";
 import { Board } from "./Board";
 import { ConfirmDialog, type ConfirmRequest } from "./ConfirmDialog";
+import { CaseThread } from "./CaseThread";
 import { HoldButton } from "./HoldButton";
 
 const STAMP: Record<string, string | null> = { open: null, on: "It's on", locked: "Charged", completed: "Arrived", cancelled: "Cancelled" };
@@ -145,9 +146,14 @@ function Fare({ q, onChange }: { q: QuestDetail; onChange: (q: QuestDetail) => v
       {activeMine?.status === "held" && (
         <MineLine chip="chip-held" text={`Seat ${activeMine.seat}. ${money(activeMine.hold_cents)} held by PayPal.`} />
       )}
-      {activeMine?.status === "standby" && (
-        <MineLine chip="chip-held" text={`On standby. ${money(activeMine.hold_cents)} held. You move up if a seat opens.`} />
-      )}
+      {activeMine?.status === "standby" && (() => {
+        const offer = q.proposals.find((p) => p.status === "offered" && p.result?.awaiting === activeMine.id);
+        return offer ? (
+          <SeatOffer offerId={offer.id} cents={offer.result?.cents ?? q.share_cents} hold={activeMine.hold_cents} onChange={onChange} />
+        ) : (
+          <MineLine chip="chip-held" text={`On standby. ${money(activeMine.hold_cents)} held. You move up if a seat opens.`} />
+        );
+      })()}
       {activeMine?.status === "charged" && (
         <MineLine chip="chip-paid" text={`Seat ${activeMine.seat ?? ""}. Charged ${money(activeMine.charged_cents)}.`} />
       )}
@@ -164,6 +170,13 @@ function Fare({ q, onChange }: { q: QuestDetail; onChange: (q: QuestDetail) => v
         </button>
       )}
       {q.status === "locked" && <PayoutStatus q={q} onChange={onChange} />}
+      {q.status !== "locked" && q.cases.filter((c) => c.status === "open" && (c.my_role === "host" || c.my_role === "reporter")).map((c) => (
+        <div key={c.id} className="flex flex-col gap-2 rounded border-2 border-ink bg-white p-3 text-[14px]">
+          <div className="font-bold text-stamp">Sidequest is reviewing {c.source === "paypal" ? "a PayPal dispute" : "a report"}</div>
+          <p><strong>{c.reporter?.name}:</strong> {c.reason}</p>
+          <CaseThread c={c} q={q} onChange={onChange} />
+        </div>
+      ))}
 
       {activeMine && (activeMine.status === "held" || activeMine.status === "standby") && (
         <button className="btn btn-ghost btn-sm w-full" disabled={!!busy} onClick={() => act("leave", `/quests/${q.id}/leave`, "You left. Your hold was released.", {
@@ -179,6 +192,41 @@ function Fare({ q, onChange }: { q: QuestDetail; onChange: (q: QuestDetail) => v
       <p className="mt-auto text-[13px] text-muted">PayPal holds your fare. Nothing is charged unless the quest runs.</p>
       {ask && <ConfirmDialog req={ask} onConfirm={ask.run} onCancel={() => setAsk(null)} />}
     </>
+  );
+}
+
+/** A seat opened after the quest was charged. Nothing is captured until the person on standby agrees. */
+function SeatOffer({ offerId, cents, hold, onChange }: {
+  offerId: string; cents: number; hold: number; onChange: (q: QuestDetail) => void;
+}) {
+  const { toast } = useSession();
+  const [busy, setBusy] = useState<"yes" | "no" | null>(null);
+  const answer = async (accept: boolean) => {
+    setBusy(accept ? "yes" : "no");
+    try {
+      onChange(await api<QuestDetail>(`/proposals/${offerId}/seat`, { method: "POST", json: { accept } }));
+      toast(accept ? `You're in. PayPal charged ${money(cents)} from your hold.` : "No problem. Your hold was released.", accept ? "money" : "info");
+    } catch (e) {
+      toast(e instanceof Error ? e.message : "That didn't work.", "error");
+    } finally {
+      setBusy(null);
+    }
+  };
+  return (
+    <div className="flex flex-col gap-3 rounded border-2 border-money bg-white p-4" role="region" aria-label="Seat offer">
+      <div className="text-[16px] font-bold">A seat opened for you</div>
+      <p className="text-[14px] leading-snug">
+        Someone dropped out. Take the seat for <strong>{money(cents)}</strong>, charged from your {money(hold)} hold.
+        Nothing is charged unless you confirm.
+      </p>
+      <div className="flex flex-wrap gap-2">
+        <button className="btn btn-money btn-sm" disabled={!!busy} onClick={() => answer(true)}>
+          {busy === "yes" ? "Charging on PayPal..." : `Confirm and pay ${money(cents)}`}
+        </button>
+        <button className="btn btn-ghost btn-sm" disabled={!!busy} onClick={() => answer(false)}>No thanks</button>
+      </div>
+      <p className="text-[12px] text-muted">If you don&apos;t answer within 12 hours, your hold is released.</p>
+    </div>
   );
 }
 
@@ -216,7 +264,6 @@ function PayoutStatus({ q, onChange }: { q: QuestDetail; onChange: (q: QuestDeta
   const { toast } = useSession();
   const [reporting, setReporting] = useState(false);
   const [reason, setReason] = useState("");
-  const [reply, setReply] = useState("");
   const [busy, setBusy] = useState(false);
   const isHost = q.viewer.role === "host";
   const paid = q.viewer.membership?.status === "charged";
@@ -233,7 +280,6 @@ function PayoutStatus({ q, onChange }: { q: QuestDetail; onChange: (q: QuestDeta
       toast(done);
       setReporting(false);
       setReason("");
-      setReply("");
     } catch (e) {
       toast(e instanceof Error ? e.message : "That didn't work.", "error");
     } finally {
@@ -249,15 +295,8 @@ function PayoutStatus({ q, onChange }: { q: QuestDetail; onChange: (q: QuestDeta
           {open.map((c) => (
             <div key={c.id} className="flex flex-col gap-2">
               <p><strong>{c.source === "paypal" ? `PayPal dispute from ${c.reporter?.name ?? "a member"}` : c.reporter?.name}:</strong> {c.reason}</p>
-              {c.host_response && <p className="border-l-4 border-rule pl-2"><strong>{q.host.name}:</strong> {c.host_response}</p>}
-              {isHost && !c.host_response && (
-                <form className="flex flex-col gap-2" onSubmit={(e) => { e.preventDefault(); post(`/cases/${c.id}/respond`, { text: reply }, "Reply sent to Sidequest."); }}>
-                  <label htmlFor={`reply-${c.id}`} className="text-[13px] font-semibold">Your side</label>
-                  <textarea id={`reply-${c.id}`} className="field" rows={2} value={reply} onChange={(e) => setReply(e.target.value)}
-                    placeholder="What happened, and anything you've already done about it" minLength={3} required />
-                  <button className="btn btn-ink btn-sm self-start" disabled={busy} type="submit">Send to Sidequest</button>
-                </form>
-              )}
+              {c.host_response && c.messages.length === 0 && <p className="border-l-4 border-rule pl-2"><strong>{q.host.name}:</strong> {c.host_response}</p>}
+              <CaseThread c={c} q={q} onChange={onChange} />
               {c.mine && (
                 <button className="self-start text-[13px] font-semibold underline" disabled={busy}
                   onClick={() => post(`/cases/${c.id}/withdraw`, {}, "Report withdrawn. The payout is back on schedule.")}>

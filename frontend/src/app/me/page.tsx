@@ -20,7 +20,8 @@ const LedgerGrid = dynamic(() => import("@/components/LedgerGrid").then((m) => m
   loading: () => <div className="h-[240px] border-2 border-ink bg-stock" aria-busy="true" />,
 });
 
-type Me = { memberships: (Membership & { quest: QuestCard })[]; hosting: QuestCard[] };
+type Question = { case_id: string; quest_id: string; quest_title: string; from: string; body: string };
+type Me = { memberships: (Membership & { quest: QuestCard })[]; hosting: QuestCard[]; questions: Question[] };
 
 const STATE: Record<string, { chip: string; text: (m: Membership) => string }> = {
   held: { chip: "chip-held", text: (m) => `Held ${money(m.hold_cents)}, not charged` },
@@ -103,6 +104,20 @@ export default function MyMoney() {
 
       <main className="mx-auto flex max-w-page flex-col gap-12 px-4 pt-12 sm:px-10">
         {!user && <p className="text-[17px]">Pick who you are in the top right to see your money.</p>}
+        {user && me && me.questions.length > 0 && (
+          <section className="flex flex-col gap-2" aria-labelledby="questions-h">
+            <h2 id="questions-h" className="h2">Sidequest has a question</h2>
+            {me.questions.map((qq) => (
+              <Link key={qq.case_id} href={`/q/${qq.quest_id}`} className="panel flex flex-wrap items-center justify-between gap-3 border-stamp p-4 no-underline hover:bg-white">
+                <span className="min-w-0">
+                  <span className="block text-[14px] text-muted">{qq.from} from Sidequest, about {qq.quest_title}</span>
+                  <span className="block font-semibold">{qq.body}</span>
+                </span>
+                <span className="btn btn-ink btn-sm">Answer</span>
+              </Link>
+            ))}
+          </section>
+        )}
         {user && me && (
           <section className="flex flex-col gap-4" aria-labelledby="mine-h">
             <h2 id="mine-h" className="h2">Your quests</h2>

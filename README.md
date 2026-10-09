@@ -44,7 +44,7 @@ Open the [live demo](https://sidequest-web-q5pq.onrender.com) and click **Take t
 |---|---|---|
 | 1. Hold your spot | Leo | Approve an $86.36 hold with PayPal's own button. Seat 5 fills and the quest runs. |
 | 2. It's on: lock and charge | Hon, the host | More people join, the share drops to $71.83, and every hold is captured at that split. |
-| 3. Someone drops out | Dev, then Hon | Dev tells the group chat he's sick. Claude asks the host, who approves: charge the standby, refund Dev. |
+| 3. Someone drops out | Dev, Hon, then the standby | Dev tells the group chat he's sick. Claude asks the host, who approves the swap. The person on standby confirms they'll pay before anyone is charged or refunded. |
 | 4. Settle up from a receipt | Hon | Claude reads the gas receipt. Each person gets a PayPal invoice for their share, with the receipt linked. |
 | 5. The host gets paid | anyone | A PayPal payout to the host. In real use it waits 24 hours after the trip. |
 
@@ -117,7 +117,7 @@ Hosts get a dashboard on **My money**, built with [AG Studio](https://www.ag-gri
 
 Hosts never decide reports about their own trips. Sidequest staff do, on `/admin`:
 
-- **Cases.** A member who paid can report a problem; a dispute filed with PayPal arrives by webhook or the Disputes API. Either one pauses the payout. The host can reply, the reporter can withdraw, and an admin releases the payout, refunds the reporter, splits a refund across everyone who went, or accepts the PayPal claim. The form shows exactly who gets what and what the host is left with before anything moves. **Claude reads the chat, receipts and payments and suggests a decision.** It can't make one.
+- **Cases.** A member who paid can report a problem; a dispute filed with PayPal arrives by webhook or the Disputes API. Either one pauses the payout. The host can reply, the reporter can withdraw, and an admin releases the payout, refunds the reporter, splits a refund across everyone who went, or accepts the PayPal claim. The form shows exactly who gets what and what the host is left with before anything moves. **Claude reads the chat, receipts and payments and suggests a decision.** It can't make one. If something is unclear, the admin asks the host, the reporter or both in a private thread; they answer from the quest page, and My money tells them a question is waiting.
 - **Money.** Charged, fees kept, PayPal's cut, net revenue, money held for hosts, and anything a host owes back after a late refund, overall and per quest.
 - **Payments.** Every PayPal event on the platform. **Check with PayPal** fetches each object back from PayPal, flags anything that doesn't match, and swaps fee estimates for the fees PayPal reports. **PayPal's side** loads Transaction Search to catch money that never made it into the books.
 - **Fees.** Edit the schedule with a live preview of who gets what from one share. Each quest keeps the fees it was posted with.
@@ -182,12 +182,13 @@ On a $75 share the member approves $80.00. PayPal takes about $3.34 (3.49% + $0.
 - **No double billing.** Invoice numbers are deterministic, so a retried send finds the invoice it already sent instead of billing again.
 - **Holds fit PayPal's window.** Join deadlines must be within 28 days, because authorizations last 29.
 - **PayPal IDs are staff-only.** Members and hosts see what happened to their money, never PayPal order, capture or invoice IDs. The API leaves them out of the response, not just the screen.
+- **Nobody is charged for a seat they didn't confirm.** After lock, a swap needs the host's approval and then the standby's yes. If they say no or don't answer within 12 hours, their hold is released and the host decides again.
 - **Hosts never judge their own case.** Only an admin can resolve a report, and every decision is written to an audit log the app gives no way to edit.
 - **Fees can't change after you commit.** Each quest stores the fee terms it was posted with.
 - **The books are checked against PayPal.** Reconciliation compares every capture, refund, payout and invoice with PayPal's record.
 - **The demo heals itself.** Anyone can play the admin, so the demo data resets every night at 4 am New York time (`DEMO_RESET_HOUR`). "Ask Claude" on the admin page is rate limited.
 - **Prompt injection resistant.** Member messages are treated as data, so one person can't talk Claude into moving someone else's money.
-- **CI** runs 44 backend tests (money lifecycle, races, webhooks, MCP, the Claude tool loop through the real SDK, the Render Workflow tasks, fees, admin decisions and PayPal disputes) plus type checks, lint and a production build.
+- **CI** runs 47 backend tests (money lifecycle, races, webhooks, MCP, the Claude tool loop through the real SDK, the Render Workflow tasks, fees, admin decisions and PayPal disputes) plus type checks, lint and a production build.
 
 ---
 

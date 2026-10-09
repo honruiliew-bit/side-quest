@@ -298,6 +298,22 @@ class Case(Base):
     resolver: Mapped[User | None] = relationship(foreign_keys=[resolved_by], lazy="joined")
 
 
+class CaseMessage(Base):
+    """A private thread on a case between the admin, the host and the person who reported. Not in the group chat."""
+
+    __tablename__ = "case_messages"
+
+    id: Mapped[str] = mapped_column(String(40), primary_key=True, default=lambda: new_id("cm"))
+    case_id: Mapped[str] = mapped_column(ForeignKey("cases.id"), index=True)
+    author_id: Mapped[str] = mapped_column(ForeignKey("users.id"))
+    role: Mapped[str] = mapped_column(String(10))  # admin | host | reporter
+    to: Mapped[str] = mapped_column(String(10), default="admin")  # host | reporter | both | admin
+    body: Mapped[str] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(TZDateTime(), default=utcnow)
+
+    author: Mapped[User] = relationship(lazy="joined")
+
+
 class FeeSchedule(Base):
     """What Sidequest charges. The newest row applies to quests created after it."""
 

@@ -240,6 +240,27 @@ def test_ask_claude_is_rate_limited(client):
     assert 429 in codes and codes[0] == 200
 
 
+def test_admin_can_ask_both_sides_privately(client):
+    kai = login(client, "kai")
+    c = next(x for x in client.get("/admin/cases", headers=kai).json() if x["source"] == "paypal" and x["status"] == "open")
+    d = client.post(f"/admin/cases/{c['id']}/messages", headers=kai,
+                    json={"body": "Was the lobster stop in the plan you shared?", "to": "host"}).json()
+    assert d["waiting_on"] == ["host"] and d["messages"][-1]["role"] == "admin"
+    host = c["quest"]["host"]["persona"]
+    # The host sees the question on the quest page and on My money. Other members don't see the thread.
+    me = client.get("/me", headers=login(client, host)).json()
+    assert any(qq["case_id"] == c["id"] for qq in me["questions"])
+    q = client.get(f"/quests/{c['quest']['id']}", headers=login(client, host)).json()
+    thread = next(x for x in q["cases"] if x["id"] == c["id"])
+    assert thread["my_role"] == "host" and thread["messages"]
+    outsider = client.get(f"/quests/{c['quest']['id']}", headers=login(client, "maya")).json()
+    assert all(not x["messages"] for x in outsider["cases"])
+    assert client.post(f"/cases/{c['id']}/messages", headers=login(client, "maya"), json={"body": "me too"}).status_code == 403
+    client.post(f"/cases/{c['id']}/messages", headers=login(client, host), json={"body": "Yes, it was in the itinerary."})
+    d = client.get(f"/admin/cases/{c['id']}", headers=kai).json()
+    assert d["waiting_on"] == [] and d["messages"][-1]["role"] == "host" and d["host_response"]
+
+
 def test_nightly_demo_reset(client, monkeypatch):
     """Runs last: it wipes and reseeds the demo data."""
     from dataclasses import replace

@@ -15,7 +15,7 @@ from .auth import ensure_personas
 from .db import Base, engine as db_engine
 import secrets
 
-from .models import AuditLog, Case, FeeSchedule, Invoice, LedgerEntry, Quest, User, utcnow
+from .models import AuditLog, Case, CaseMessage, FeeSchedule, Invoice, LedgerEntry, Quest, User, utcnow
 from .paypal.gateway import gateway_for
 
 TZ = ZoneInfo("America/New_York")
@@ -361,6 +361,8 @@ def seed_cases(db: Session, p: dict[str, User]) -> None:
                                     "for the missed hour, which I'm happy to pass on to the group.")
     c.created_at = now - timedelta(hours=3)
     c.host_responded_at = now - timedelta(hours=2)
+    for msg in db.scalars(select(CaseMessage).where(CaseMessage.case_id == c.id)):
+        msg.created_at = c.host_responded_at
     _backdate(db, c.id, now - timedelta(hours=2))
 
     # 2. A PayPal dispute on a trip whose host was already paid. Sidequest is on the hook if it's accepted.

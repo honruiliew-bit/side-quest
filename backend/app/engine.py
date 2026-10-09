@@ -418,6 +418,8 @@ def payout_blocker(db: Session, quest: Quest) -> str | None:
         return f"Paused while Sidequest reviews a report: {quest.payout_paused_reason}"
     if db.scalar(select(func.count(Proposal.id)).where(Proposal.quest_id == quest.id, Proposal.status == "pending")):
         return "There's a money change waiting for the host's approval."
+    if db.scalar(select(func.count(Proposal.id)).where(Proposal.quest_id == quest.id, Proposal.status == "offered")):
+        return "Someone on standby hasn't confirmed their seat yet."
     return None
 
 
@@ -616,7 +618,7 @@ def _validate_actions(db: Session, quest: Quest, actions: list[dict]) -> list[di
 def create_proposal(db: Session, quest: Quest, title: str, rationale: str, actions: list[dict]) -> Proposal:
     clean = _validate_actions(db, quest, actions)
     sig = _signature(clean)
-    for p in db.scalars(select(Proposal).where(Proposal.quest_id == quest.id, Proposal.status == "pending")):
+    for p in db.scalars(select(Proposal).where(Proposal.quest_id == quest.id, Proposal.status.in_(["pending", "offered"]))):
         if _signature(p.actions) == sig:
             return p
     p = Proposal(quest_id=quest.id, title=title[:200], rationale=rationale, actions=clean)
@@ -649,6 +651,70 @@ def decide_proposal(db: Session, p: Proposal, approve: bool) -> Proposal:
         return p
     # Re-validate against the current state before touching money.
     actions = _validate_actions(db, quest, p.actions)
+    by_id = {m.id: m for m in quest.memberships}
+    seat = next((a for a in actions if a["type"] == "promote"), None)
+    if seat and quest.status == "locked":
+        # Moving someone up after lock charges them. Ask them first; nothing moves until they say yes.
+        m = by_id[seat["membership_id"]]
+        p.status = "offered"
+        p.result = {"awaiting": m.id, "name": m.user.name, "cents": seat["cents"]}
+        say(db, quest, f"{quest.host.name} approved: {p.title}. {m.user.name}, a seat opened. Confirm on the quest page to "
+                       f"take it for {fmt(seat['cents'])}, less than the {fmt(m.hold_cents)} you approved. "
+                       f"Nobody is charged or refunded until you do.", meta={"event": "seat_offered", "proposal": p.id})
+        db.flush()
+        return p
+    return _run_proposal(db, p, quest, actions, f"{quest.host.name} approved: {p.title}.")
+
+
+OFFER_HOURS = 12
+
+
+def respond_to_offer(db: Session, p: Proposal, user: User, accept: bool) -> Proposal:
+    """The person on standby says yes or no to a seat. Yes runs the swap on PayPal. No releases their hold
+    and gives the host a fresh choice for the person who dropped out."""
+    if p.status != "offered":
+        raise QuestError("This seat offer is no longer open.", 409)
+    quest = db.get(Quest, p.quest_id)
+    m = db.get(Membership, (p.result or {}).get("awaiting"))
+    if not m or m.user_id != user.id:
+        raise QuestError("This seat was offered to someone else.", 403)
+    if accept:
+        claimed = db.execute(update(Proposal).where(Proposal.id == p.id, Proposal.status == "offered")
+                             .values(status="running").execution_options(synchronize_session=False)).rowcount
+        if claimed != 1:
+            raise QuestError("This seat offer is no longer open.", 409)
+        p.status = "running"
+        actions = _validate_actions(db, quest, p.actions)
+        return _run_proposal(db, p, quest, actions, f"{user.name} confirmed the seat: {p.title}.")
+    return _withdraw_offer(db, p, quest, m, f"{user.name} turned down the seat.")
+
+
+def _withdraw_offer(db: Session, p: Proposal, quest: Quest, m: Membership, why: str) -> Proposal:
+    p.status = "declined"
+    p.result = {**(p.result or {}), "declined_by": m.user.name}
+    if m.status == "standby":
+        release(db, m, note="Turned down an open seat")
+    say(db, quest, f"{why} Their {fmt(m.hold_cents)} hold was released.", meta={"event": "seat_declined", "proposal": p.id})
+    dropout = next((db.get(Membership, a["membership_id"]) for a in p.actions if a.get("type") == "refund"), None)
+    if dropout and dropout.status == "charged":
+        propose_dropout(db, quest, dropout)
+    db.flush()
+    return p
+
+
+def expire_offers(db: Session, quest: Quest, now: datetime) -> int:
+    """A seat offer lapses after OFFER_HOURS, or when the trip starts, as if the person said no."""
+    count = 0
+    for p in db.scalars(select(Proposal).where(Proposal.quest_id == quest.id, Proposal.status == "offered")):
+        m = db.get(Membership, (p.result or {}).get("awaiting"))
+        late = p.decided_at and now - aware(p.decided_at) > timedelta(hours=OFFER_HOURS)
+        if m and (late or aware(quest.starts_at) <= now):
+            _withdraw_offer(db, p, quest, m, f"{m.user.name} didn't confirm the seat in time.")
+            count += 1
+    return count
+
+
+def _run_proposal(db: Session, p: Proposal, quest: Quest, actions: list[dict], done_line: str) -> Proposal:
     by_id = {m.id: m for m in quest.memberships}
     results = []
     invoice_jobs = [(by_id[a["membership_id"]], {**a, "description": (p.evidence and _evidence_text(p.evidence)) or None})
@@ -687,7 +753,7 @@ def decide_proposal(db: Session, p: Proposal, approve: bool) -> Proposal:
     p.status = "executed"
     p.result = {"done": results}
     via = f" Invoices sent from {sent_from}." if sent_from.startswith("Render") else ""
-    say(db, quest, f"{quest.host.name} approved: {p.title}. Done on PayPal.{via}", meta={"event": "executed"})
+    say(db, quest, f"{done_line} Done on PayPal.{via}", meta={"event": "executed"})
     db.flush()
     _expire_stale(db, quest, keep=p.id)
     return p
@@ -941,6 +1007,8 @@ def tick(db: Session) -> dict:
                 elif q.status == "on" and aware(q.join_by) <= now:
                     lock(db, q, reason="The join deadline passed, so the quest locked.")
                     counts["locked"] += 1
+                elif q.status == "locked" and expire_offers(db, q, now):
+                    counts["offers_expired"] = counts.get("offers_expired", 0) + 1
                 elif q.status == "locked" and payout_due_at(q) <= now and not payout_blocker(db, q):
                     complete(db, q)
                     counts["paid_out"] += 1
