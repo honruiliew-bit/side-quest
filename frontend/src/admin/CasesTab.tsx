@@ -216,8 +216,13 @@ function Side({ who, user, label, when, tz, text, foot, muted }: {
   );
 }
 
+function list(v: unknown): string[] {
+  return Array.isArray(v) ? v.map(String) : typeof v === "string" && v.trim() ? [v] : [];
+}
+
 function AiBox({ c, reviewing, onReview }: { c: CaseDetail; reviewing: boolean; onReview: () => void }) {
-  const r = c.ai_review;
+  const raw = c.ai_review;
+  const r = raw ? { ...raw, facts: list(raw.facts), missing: list(raw.missing), refund_cents_each: Number(raw.refund_cents_each) || 0 } : null;
   return (
     <section className="flex flex-col gap-3 border-2 border-ink bg-paper p-5" aria-labelledby="ai-h">
       <div className="flex flex-wrap items-center justify-between gap-3">

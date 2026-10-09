@@ -86,11 +86,48 @@ def _offline(c: Case) -> dict:
     }
 
 
+DECISIONS = {"release", "refund_reporter", "refund_everyone", "accept_claim", "need_more_info"}
+
+
+def _lines(value) -> list[str]:
+    """Models sometimes send a list as a JSON string or as plain text. Always hand back a list of strings."""
+    import json
+
+    if isinstance(value, list):
+        return [str(v).strip() for v in value if str(v).strip()][:8]
+    if isinstance(value, str) and value.strip():
+        try:
+            parsed = json.loads(value)
+            if isinstance(parsed, list):
+                return _lines(parsed)
+        except ValueError:
+            pass
+        return [p.strip(" -*\u2022") for p in value.splitlines() if p.strip(" -*\u2022")][:8]
+    return []
+
+
+def clean(raw: dict | None, cap: int) -> dict | None:
+    """The shape the admin page expects, whatever the model returned."""
+    if not isinstance(raw, dict):
+        return None
+    decision = raw.get("decision") if raw.get("decision") in DECISIONS else "need_more_info"
+    try:
+        cents = int(float(raw.get("refund_cents_each") or 0))
+    except (TypeError, ValueError):
+        cents = 0
+    return {
+        "summary": str(raw.get("summary") or "").strip(),
+        "facts": _lines(raw.get("facts")),
+        "missing": _lines(raw.get("missing")),
+        "decision": decision,
+        "refund_cents_each": max(0, min(cents, cap or 10**9)),
+        "reasoning": str(raw.get("reasoning") or "").strip(),
+        "source": raw.get("source") if raw.get("source") in {"claude", "offline"} else "claude",
+    }
+
+
 def review(db: Session, c: Case) -> dict:
     if not llm.enabled():
         return _offline(c)
     out = llm.call_tool(SYSTEM, _context(db, c), TOOL, max_tokens=900)
-    cap = c.disputed_cents or 0
-    out["refund_cents_each"] = max(0, min(int(out.get("refund_cents_each") or 0), cap or 10**9))
-    out["source"] = "claude"
-    return out
+    return clean({**out, "source": "claude"}, c.disputed_cents or 0)

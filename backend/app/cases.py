@@ -289,6 +289,12 @@ def sync_paypal_disputes(db: Session, admin: User) -> dict:
     return {"found": len(items), "opened": opened, "updated": updated, "unmatched": unmatched}
 
 
+def _review(c: Case) -> dict | None:
+    from .agent.mediator import clean
+
+    return clean(c.ai_review, c.disputed_cents or 0)
+
+
 def case_out(c: Case, full: bool = False) -> dict:
     from .views import iso, user_out
 
@@ -302,6 +308,6 @@ def case_out(c: Case, full: bool = False) -> dict:
         "resolved_by": user_out(c.resolver), "resolved_at": iso(c.resolved_at), "created_at": iso(c.created_at),
         "quest": {"id": q.id, "code": q.code, "title": q.title, "status": q.status, "line_code": q.line_code,
                   "host": user_out(q.host), "tz": q.tz},
-        "ai_review": c.ai_review,
+        "ai_review": _review(c),
     }
     return out

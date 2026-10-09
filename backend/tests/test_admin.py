@@ -183,3 +183,13 @@ def test_seeded_admin_data_and_audit_tools(client):
     st = client.get("/admin/statement", headers=kai).json()
     assert st["ok"] is False and "mock" in st["error"]
     assert client.post("/admin/disputes/sync", headers=kai).status_code == 409
+
+
+def test_claude_review_is_cleaned_whatever_shape_it_comes_back_in():
+    from app.agent.mediator import clean
+
+    r = clean({"summary": "s", "facts": '["Jules paid $76.82", "Wind advisory"]', "missing": "No receipt\n- No photo",
+               "decision": "refund", "refund_cents_each": "99999", "reasoning": "r"}, 7682)
+    assert r["facts"] == ["Jules paid $76.82", "Wind advisory"] and r["missing"] == ["No receipt", "No photo"]
+    assert r["decision"] == "need_more_info" and r["refund_cents_each"] == 7682
+    assert clean({"summary": "s"}, 100)["facts"] == [] and clean(None, 100) is None
