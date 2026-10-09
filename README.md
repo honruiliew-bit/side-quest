@@ -53,7 +53,7 @@ The sandbox buyer login is shown in step 1. The **money log** on the quest page 
 Then try:
 - **My money** as Hon: the host desk. Press **Nudge** on Leo, or **Edit with Claude** and **Nudge the oldest invoice**.
 - **Scout**, the assistant in the bottom-right corner: ask for "something under $90 this weekend" and it can hold your spot.
-- **Admin** as Kai (bottom of the person menu): decide the open kayak report, look at the PayPal dispute on a trip whose host was already paid, and change the fees.
+- **Admin** as Kai (bottom of the person menu): decide the open kayak report (the host got $100 back from the outfitter, so split it: $20 each), look at the PayPal dispute on a trip whose host was already paid, and change the fees.
 
 ![Guided tour](docs/screens/tour.png)
 
@@ -114,7 +114,7 @@ Hosts get a dashboard on **My money**, built with [AG Studio](https://www.ag-gri
 
 Hosts never decide reports about their own trips. Sidequest staff do, on `/admin`:
 
-- **Cases.** A member who paid can report a problem; a dispute filed with PayPal arrives by webhook or the Disputes API. Either one pauses the payout. The host can reply, the reporter can withdraw, and an admin releases the payout, refunds the reporter, refunds everyone, or accepts the PayPal claim. **Claude reads the chat, receipts and payments and suggests a decision.** It can't make one.
+- **Cases.** A member who paid can report a problem; a dispute filed with PayPal arrives by webhook or the Disputes API. Either one pauses the payout. The host can reply, the reporter can withdraw, and an admin releases the payout, refunds the reporter, splits a refund across everyone who went, or accepts the PayPal claim. The form shows exactly who gets what and what the host is left with before anything moves. **Claude reads the chat, receipts and payments and suggests a decision.** It can't make one.
 - **Money.** Charged, fees kept, PayPal's cut, net revenue, money held for hosts, and anything a host owes back after a late refund, overall and per quest.
 - **Payments.** Every PayPal event on the platform. **Check with PayPal** fetches each object back from PayPal, flags anything that doesn't match, and swaps fee estimates for the fees PayPal reports. **PayPal's side** loads Transaction Search to catch money that never made it into the books.
 - **Fees.** Edit the schedule with a live preview of who gets what from one share. Each quest keeps the fees it was posted with.
@@ -182,7 +182,7 @@ On a $75 share the member approves $80.00. PayPal takes about $3.34 (3.49% + $0.
 - **Fees can't change after you commit.** Each quest stores the fee terms it was posted with.
 - **The books are checked against PayPal.** Reconciliation compares every capture, refund, payout and invoice with PayPal's record.
 - **Prompt injection resistant.** Member messages are treated as data, so one person can't talk Claude into moving someone else's money.
-- **CI** runs 39 backend tests (money lifecycle, races, webhooks, MCP, the Claude tool loop through the real SDK, the Render Workflow tasks, fees, admin decisions and PayPal disputes) plus type checks, lint and a production build.
+- **CI** runs 41 backend tests (money lifecycle, races, webhooks, MCP, the Claude tool loop through the real SDK, the Render Workflow tasks, fees, admin decisions and PayPal disputes) plus type checks, lint and a production build.
 
 ---
 

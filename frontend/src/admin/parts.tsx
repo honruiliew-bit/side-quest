@@ -64,11 +64,20 @@ export const COLORS = {
   held: "#9fbdf0",
 };
 
-export const DECISION_TEXT: Record<string, string> = {
+export const DECIDED_TEXT: Record<string, string> = {
   release: "Released the payout",
   refund_reporter: "Refunded the reporter",
+  split_refund: "Split a refund across everyone",
   refund_everyone: "Refunded everyone",
   accept_claim: "Accepted the PayPal claim",
+};
+
+export const DECISION_TEXT: Record<string, string> = {
+  release: "Release the payout",
+  refund_reporter: "Refund the reporter",
+  split_refund: "Split a refund across everyone",
+  refund_everyone: "Refunded everyone",
+  accept_claim: "Accept the PayPal claim",
   need_more_info: "Ask for more information",
 };
 

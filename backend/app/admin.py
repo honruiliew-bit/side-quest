@@ -84,6 +84,7 @@ def _case_detail(db: Session, c: Case) -> dict:
     return {
         **cases.case_out(c),
         "money": fees.quest_money(q, entries).out(),
+        "host_paid": any(m.user_id == q.host_id and m.charged_cents for m in q.memberships),
         "payout_due_at": iso(engine.payout_due_at(q)),
         "members": [membership_out(m) for m in q.memberships if m.charged_cents or m.status in {"held", "standby"}],
         "ledger": [ledger_out(e) for e in reversed(entries)],
@@ -115,8 +116,9 @@ def review_case(case_id: str, admin: User = Depends(require_admin), db: Session 
 
 
 class ResolveIn(BaseModel):
-    decision: str = Field(pattern="^(release|refund_reporter|refund_everyone|accept_claim)$")
+    decision: str = Field(pattern="^(release|refund_reporter|split_refund|refund_everyone|accept_claim)$")
     refund_cents_each: int = Field(default=0, ge=0, le=500_000)
+    refund_total_cents: int = Field(default=0, ge=0, le=5_000_000)  # split_refund only
     note: str = Field(min_length=3, max_length=600)
     pay_now: bool = False
 
@@ -128,7 +130,8 @@ def resolve_case(case_id: str, body: ResolveIn, admin: User = Depends(require_ad
         db.expire_all()
         c = _case(db, case_id)
         try:
-            cases.resolve(db, c, admin, body.decision, body.refund_cents_each, body.note, body.pay_now)
+            cases.resolve(db, c, admin, body.decision, body.refund_cents_each, body.note, body.pay_now,
+                          body.refund_total_cents)
             db.commit()
         except Exception:
             db.rollback()

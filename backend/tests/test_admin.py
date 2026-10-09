@@ -191,5 +191,30 @@ def test_claude_review_is_cleaned_whatever_shape_it_comes_back_in():
     r = clean({"summary": "s", "facts": '["Jules paid $76.82", "Wind advisory"]', "missing": "No receipt\n- No photo",
                "decision": "refund", "refund_cents_each": "99999", "reasoning": "r"}, 7682)
     assert r["facts"] == ["Jules paid $76.82", "Wind advisory"] and r["missing"] == ["No receipt", "No photo"]
-    assert r["decision"] == "need_more_info" and r["refund_cents_each"] == 7682
+    assert r["decision"] == "need_more_info" and r["refund_cents"] == 7682
     assert clean({"summary": "s"}, 100)["facts"] == [] and clean(None, 100) is None
+    old = clean({"decision": "refund_everyone", "refund_cents_each": 2000}, 7682, people=5)
+    assert old["decision"] == "split_refund" and old["refund_cents"] == 10000
+
+
+def test_split_a_credit_across_everyone_who_went(client):
+    qid, hon, _ = locked_tour(client)
+    d = client.post(f"/quests/{qid}/problem", json={"reason": "Only an hour on the water"}, headers=login(client, "maya")).json()
+    case = d["cases"][0]
+    client.post(f"/cases/{case['id']}/respond", headers=hon,
+                json={"text": "The outfitter refunded me $100 for the missed hour. Happy to pass it on."})
+    kai = login(client, "kai")
+    review = client.post(f"/admin/cases/{case['id']}/review", headers=kai).json()["ai_review"]
+    assert review["decision"] == "split_refund" and review["refund_cents"] == 10000
+    out = client.post(f"/admin/cases/{case['id']}/resolve", headers=kai, json={
+        "decision": "split_refund", "refund_total_cents": 10000, "note": "Passing on the outfitter's refund.",
+        "pay_now": True}).json()
+    assert out["status"] == "resolved" and out["refund_cents_each"] == 2000
+    refunds = [e for e in out["ledger"] if e["kind"] == "refund"]
+    # Four members get $20 each. Hon is the host, so his $20 share stays in his payout instead.
+    assert len(refunds) == 4 and all(e["cents"] == 2000 for e in refunds)
+    assert all(e["user"]["name"] != "Hon" for e in refunds)
+    m = out["money"]
+    # Runs after the fee-change test, so read the quest's own fees from the books.
+    assert m["refunded_cents"] == 8000
+    assert m["paid_out_cents"] == m["gross_cents"] - 8000 - m["booking_fees_cents"] - m["host_fee_cents"]

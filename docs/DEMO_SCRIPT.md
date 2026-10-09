@@ -38,7 +38,7 @@ Judging weighs presentation equally with the other four criteria, and Best Demo 
 
 **Voice:** "Gas came in over. The host snaps the receipt, Claude reads and checks it, and everyone gets a PayPal invoice for their share with the receipt linked. The host is paid 24 hours after the trip, and anyone can pause that if something went wrong."
 
-**Optional cut (10 seconds, replaces part of the agentic commerce section if over time):** Switch to Kai, open Admin. The kayak report is waiting. Click Ask Claude, then refund Jules $20. "A report goes to Sidequest, never the host. Claude suggests a fix, staff approve it, and it's logged."
+**Optional cut (10 seconds, replaces part of the agentic commerce section if over time):** Switch to Kai, open Admin. The kayak report is waiting. Click Ask Claude: it suggests splitting the outfitter's $100 refund, $20 each. Approve. "A report goes to Sidequest, never the host. Claude suggests a fix, staff approve it, and it's logged."
 
 ## 2:25 to 2:40. Agentic commerce
 

@@ -38,14 +38,14 @@ export type Overview = {
   paypal_mode: "mock" | "sandbox";
 };
 
-export type Decision = "release" | "refund_reporter" | "refund_everyone" | "accept_claim";
+export type Decision = "release" | "refund_reporter" | "split_refund" | "refund_everyone" | "accept_claim";
 
 export type AiReview = {
   summary: string;
   facts: string[];
   missing: string[];
   decision: Decision | "need_more_info";
-  refund_cents_each: number;
+  refund_cents: number; // refund_reporter: to the reporter. split_refund: the total to split
   reasoning: string;
   source: "claude" | "offline";
 };
@@ -75,6 +75,7 @@ export type AdminCase = {
 
 export type CaseDetail = AdminCase & {
   money: QuestMoney;
+  host_paid: boolean;
   payout_due_at: string;
   members: Membership[];
   ledger: { id: string; kind: LedgerKind; cents: number; ref: string | null; note: string; user: UserLite | null; created_at: string }[];

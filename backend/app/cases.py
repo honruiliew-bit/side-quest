@@ -6,6 +6,8 @@ its webhook. The host can reply, the reporter can withdraw, and only an admin ca
 
   release          the payout goes ahead
   refund_reporter  refund the person who reported, up to what they paid
+  split_refund     split a total across everyone who went, e.g. money the host got back for a shared cost.
+                   The host's own share stays in their payout instead of being refunded to themselves.
   refund_everyone  refund each person who paid the same amount
   accept_claim     PayPal disputes only: accept the claim on PayPal, which refunds the buyer
 
@@ -20,7 +22,16 @@ from sqlalchemy.orm import Session
 from .models import AuditLog, Case, LedgerEntry, Membership, Quest, User, utcnow
 from .pricing import fmt
 
-DECISIONS = {"release", "refund_reporter", "refund_everyone", "accept_claim"}
+DECISIONS = {"release", "refund_reporter", "split_refund", "refund_everyone", "accept_claim"}
+
+
+def split_plan(quest: Quest, total_cents: int) -> dict:
+    """How a total splits across everyone who paid. The host's own share isn't sent back to them."""
+    payers = [m for m in quest.memberships if m.charged_cents - m.refunded_cents > 0]
+    each = total_cents // len(payers) if payers else 0
+    refunds = [(m, min(each, m.charged_cents - m.refunded_cents)) for m in payers if m.user_id != quest.host_id]
+    host_share = each if any(m.user_id == quest.host_id for m in payers) else 0
+    return {"people": len(payers), "each": each, "refunds": refunds, "host_share": host_share}
 
 PAYPAL_REASONS = {
     "MERCHANDISE_OR_SERVICE_NOT_RECEIVED": "Paid but says the trip never happened",
@@ -132,7 +143,7 @@ def withdraw(db: Session, c: Case, user: User) -> Case:
 
 
 def resolve(db: Session, c: Case, admin: User, decision: str, refund_cents_each: int = 0, note: str = "",
-            pay_now: bool = False) -> Case:
+            pay_now: bool = False, refund_total_cents: int = 0) -> Case:
     """The admin's decision. Refunds go through PayPal before the case closes."""
     from . import engine
     from .engine import QuestError, say
@@ -159,6 +170,14 @@ def resolve(db: Session, c: Case, admin: User, decision: str, refund_cents_each:
             raise QuestError(f"Refund {m.user.name} between $0.01 and {fmt(available)}.")
         engine.refund(db, m, refund_cents_each, f"Sidequest reviewed your report: {note}")
         refunded.append((m.user.name, refund_cents_each))
+    elif decision == "split_refund":
+        plan = split_plan(quest, refund_total_cents)
+        if refund_total_cents <= 0 or plan["each"] <= 0:
+            raise QuestError("Enter the total to split, at least one cent per person.")
+        for m, cents in plan["refunds"]:
+            engine.refund(db, m, cents, f"Your share of a {fmt(refund_total_cents)} refund on {quest.code}: {note}")
+            refunded.append((m.user.name, cents))
+        refund_cents_each = plan["each"]
     elif decision == "refund_everyone":
         payers = [m for m in quest.memberships if m.charged_cents - m.refunded_cents > 0]
         if refund_cents_each <= 0 or not payers:
@@ -193,7 +212,13 @@ def resolve(db: Session, c: Case, admin: User, decision: str, refund_cents_each:
     c.resolved_by, c.resolved_at = admin.id, utcnow()
     sync_pause(db, quest)
 
-    if refunded:
+    if decision == "split_refund":
+        host_went = any(m.user_id == quest.host_id and m.charged_cents for m in quest.memberships)
+        outcome = (f"split {fmt(refund_total_cents)} across {len(refunded) + int(host_went)} people: "
+                   f"{fmt(refund_cents_each)} each back to " + ", ".join(n for n, _ in refunded))
+        if host_went:
+            outcome += f". {quest.host.name}'s own share stays in the payout"
+    elif refunded:
         outcome = "refunded " + ", ".join(f"{n} {fmt(x)}" for n, x in refunded)
     else:
         outcome = "released the payout"
@@ -290,9 +315,9 @@ def sync_paypal_disputes(db: Session, admin: User) -> dict:
 
 
 def _review(c: Case) -> dict | None:
-    from .agent.mediator import clean
+    from .agent.mediator import clean, payers
 
-    return clean(c.ai_review, c.disputed_cents or 0)
+    return clean(c.ai_review, c.disputed_cents or 0, payers(c))
 
 
 def case_out(c: Case, full: bool = False) -> dict:

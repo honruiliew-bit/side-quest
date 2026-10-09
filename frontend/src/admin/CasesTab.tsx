@@ -7,7 +7,7 @@ import { EVENT } from "@/lib/ledger";
 import { api } from "@/lib/api";
 import { money, relative, timeAgo } from "@/lib/format";
 import { useSession } from "@/lib/session";
-import { DECISION_TEXT, LineDot } from "./parts";
+import { DECIDED_TEXT, DECISION_TEXT, LineDot } from "./parts";
 import type { AdminCase, CaseDetail, Decision } from "./types";
 
 const PAYPAL_STATUS: Record<string, string> = {
@@ -106,7 +106,7 @@ function CaseList({ rows, openId, onOpen }: { rows: AdminCase[]; openId: string 
               </span>
               <span className="mt-1 line-clamp-2 block text-[14px]">{c.reason}</span>
               <span className="mt-1 block text-[12px] text-muted">
-                {c.status === "open" ? `Opened ${relative(c.created_at)}` : `${c.decision ? DECISION_TEXT[c.decision] : "Withdrawn"} ${c.resolved_at ? relative(c.resolved_at) : ""}`}
+                {c.status === "open" ? `Opened ${relative(c.created_at)}` : `${c.decision ? DECIDED_TEXT[c.decision] : "Withdrawn"} ${c.resolved_at ? relative(c.resolved_at) : ""}`}
               </span>
             </span>
           </button>
@@ -144,7 +144,6 @@ function CaseView({ id, onDecided }: { id: string; onDecided: () => void }) {
   const q = c.quest;
   const tz = q.tz;
   const reporterPaid = c.members.find((m) => m.user.id === c.reporter?.id);
-  const paidBy = c.members.filter((m) => m.charged_cents > 0);
   const payoutLine =
     q.status === "completed"
       ? `${q.host.name} was already paid ${money(c.money.paid_out_cents)}. A refund now comes out of Sidequest's money and ${q.host.name} would owe it back.`
@@ -181,11 +180,11 @@ function CaseView({ id, onDecided }: { id: string; onDecided: () => void }) {
       <AiBox c={c} reviewing={reviewing} onReview={review} />
 
       {c.status === "open" ? (
-        <DecisionForm c={c} paidBy={paidBy.length} onDone={(next) => { setC(next); onDecided(); }} />
+        <DecisionForm c={c} onDone={(next) => { setC(next); onDecided(); }} />
       ) : (
         <section className="panel flex flex-col gap-2 p-5">
-          <h3 className="h3">{c.decision ? DECISION_TEXT[c.decision] : "Withdrawn by the reporter"}</h3>
-          {c.refund_cents_each ? <p className="text-[15px]">{money(c.refund_cents_each)}{c.decision === "refund_everyone" ? " each" : ""}</p> : null}
+          <h3 className="h3">{c.decision ? DECIDED_TEXT[c.decision] : "Withdrawn by the reporter"}</h3>
+          {c.refund_cents_each ? <p className="text-[15px]">{money(c.refund_cents_each)}{c.decision === "split_refund" || c.decision === "refund_everyone" ? " each" : ""}</p> : null}
           <p className="text-[15px]">{c.resolution_note}</p>
           <p className="text-[13px] text-muted">
             {c.resolved_by ? `${c.resolved_by.name}, ` : ""}{c.resolved_at ? timeAgo(c.resolved_at, tz) : ""}
@@ -222,7 +221,7 @@ function list(v: unknown): string[] {
 
 function AiBox({ c, reviewing, onReview }: { c: CaseDetail; reviewing: boolean; onReview: () => void }) {
   const raw = c.ai_review;
-  const r = raw ? { ...raw, facts: list(raw.facts), missing: list(raw.missing), refund_cents_each: Number(raw.refund_cents_each) || 0 } : null;
+  const r = raw ? { ...raw, facts: list(raw.facts), missing: list(raw.missing), refund_cents: Number(raw.refund_cents) || 0 } : null;
   return (
     <section className="flex flex-col gap-3 border-2 border-ink bg-paper p-5" aria-labelledby="ai-h">
       <div className="flex flex-wrap items-center justify-between gap-3">
@@ -253,7 +252,8 @@ function AiBox({ c, reviewing, onReview }: { c: CaseDetail; reviewing: boolean; 
           )}
           <p className="border-l-4 border-ink bg-white px-3 py-2">
             <strong>Suggests: {DECISION_TEXT[r.decision] ?? r.decision}</strong>
-            {r.refund_cents_each > 0 && <> ({money(r.refund_cents_each)}{r.decision === "refund_everyone" ? " each" : ""})</>}. {r.reasoning}
+            {r.refund_cents > 0 && <> ({r.decision === "split_refund" ? `${money(r.refund_cents)} split across everyone` : money(r.refund_cents)})</>}.
+            {r.reasoning && <> {r.reasoning}</>}
           </p>
           {r.source === "offline" && <p className="text-[13px] text-muted">Claude is off on this server, so this is a simple rule of thumb.</p>}
         </div>
@@ -262,50 +262,86 @@ function AiBox({ c, reviewing, onReview }: { c: CaseDetail; reviewing: boolean; 
   );
 }
 
-function DecisionForm({ c, paidBy, onDone }: { c: CaseDetail; paidBy: number; onDone: (c: CaseDetail) => void }) {
+function DecisionForm({ c, onDone }: { c: CaseDetail; onDone: (c: CaseDetail) => void }) {
   const { toast } = useSession();
-  const suggested = c.ai_review && c.ai_review.decision !== "need_more_info" ? c.ai_review.decision : null;
+  const host = c.quest.host;
+  const reporter = c.reporter?.name ?? "The reporter";
+  const review = c.ai_review;
+  const suggested = review && review.decision !== "need_more_info" ? review.decision : null;
   const [decision, setDecision] = useState<Decision>(suggested ?? (c.source === "paypal" ? "accept_claim" : "release"));
-  const [amount, setAmount] = useState(c.ai_review?.refund_cents_each ? (c.ai_review.refund_cents_each / 100).toFixed(2) : "");
+  const [reporterAmt, setReporterAmt] = useState("");
+  const [splitTotal, setSplitTotal] = useState("");
   const [note, setNote] = useState("");
+  const [noteTouched, setNoteTouched] = useState(false);
   const [payNow, setPayNow] = useState(false);
   const [busy, setBusy] = useState(false);
-  const reporter = c.reporter?.name ?? "the reporter";
-  const reporterLeft = (() => {
-    const m = c.members.find((x) => x.user.id === c.reporter?.id);
-    return m ? m.charged_cents - m.refunded_cents : c.disputed_cents;
-  })();
 
+  // When Claude has a suggestion, start from it: same option, same amount.
   useEffect(() => {
-    if (suggested) setDecision(suggested);
-    if (c.ai_review?.refund_cents_each) setAmount((c.ai_review.refund_cents_each / 100).toFixed(2));
-  }, [c.ai_review, suggested]);
+    if (!suggested) return;
+    setDecision(suggested);
+    const amt = review?.refund_cents ? (review.refund_cents / 100).toFixed(2) : "";
+    if (suggested === "split_refund") setSplitTotal(amt);
+    if (suggested === "refund_reporter") setReporterAmt(amt);
+  }, [review, suggested]);
 
-  const cents = Math.round(parseFloat(amount || "0") * 100);
-  const needsAmount = decision === "refund_reporter" || decision === "refund_everyone";
-  const options: { id: Decision; label: string; text: string; show: boolean }[] = [
-    { id: "release", label: "Release the payout", text: `${c.quest.host.name} is paid in full. Nobody is refunded.`, show: true },
-    { id: "refund_reporter", label: `Refund ${reporter}`, text: `Up to ${money(reporterLeft)}, through PayPal. It comes out of the host's payout.`, show: true },
-    { id: "refund_everyone", label: "Refund everyone", text: `The same amount to each of the ${paidBy} people who paid.`, show: true },
-    { id: "accept_claim", label: "Accept the claim on PayPal", text: "PayPal refunds the buyer and closes the dispute.", show: c.source === "paypal" },
+  const cents = (v: string) => Math.max(0, Math.round(parseFloat(v || "0") * 100) || 0);
+  const payers = c.members.filter((m) => m.charged_cents - m.refunded_cents > 0);
+  const reporterRow = c.members.find((m) => m.user.id === c.reporter?.id);
+  const reporterLeft = reporterRow ? reporterRow.charged_cents - reporterRow.refunded_cents : c.disputed_cents;
+  const hostPaid = payers.some((m) => m.user.id === host.id);
+  const total = cents(splitTotal);
+  const each = payers.length ? Math.floor(total / payers.length) : 0;
+  const splitRefunds = payers.filter((m) => m.user.id !== host.id).map((m) => ({ name: m.user.name, cents: Math.min(each, m.charged_cents - m.refunded_cents) }));
+  const reporterCents = Math.min(cents(reporterAmt), reporterLeft);
+
+  const fromHost =
+    decision === "refund_reporter" ? reporterCents
+      : decision === "split_refund" ? splitRefunds.reduce((a, r) => a + r.cents, 0)
+        : decision === "accept_claim" ? Math.min(c.disputed_cents, reporterLeft) : 0;
+  const completed = c.quest.status === "completed";
+  const payoutBefore = c.money.escrow_cents;
+  const payoutAfter = Math.max(payoutBefore - fromHost, 0);
+  const ready = decision === "release" || decision === "accept_claim" || (decision === "refund_reporter" ? reporterCents > 0 : each > 0);
+
+  const options: { id: Decision; label: string; when: string; show: boolean }[] = [
+    { id: "release", label: "Release the payout", when: "The trip ran as promised, or nobody lost money.", show: true },
+    { id: "split_refund", label: "Split a refund across everyone", when: `It affected everyone who went, or ${host.name} got money back for a shared cost.`, show: true },
+    { id: "refund_reporter", label: `Refund ${reporter} only`, when: `Only ${reporter} lost out.`, show: c.source === "member" },
+    { id: "accept_claim", label: "Accept the claim on PayPal", when: "The buyer is right. PayPal refunds them and closes the dispute.", show: c.source === "paypal" },
   ];
+
+  const defaultNote =
+    suggested === decision && review?.reasoning ? review.reasoning
+      : decision === "release" ? "The trip ran as planned, so the payout goes ahead."
+        : decision === "split_refund" ? `Splitting ${money(total)} equally across the ${payers.length} people who went.`
+          : decision === "refund_reporter" ? `Refunding ${reporter} ${money(reporterCents)}.`
+            : "Accepting the buyer's claim on PayPal.";
+  useEffect(() => {
+    if (!noteTouched) setNote(defaultNote);
+  }, [defaultNote, noteTouched]);
+
   const confirm =
-    decision === "release" ? `Release ${c.quest.host.name}'s payout`
-      : decision === "refund_reporter" ? `Refund ${reporter} ${money(cents || 0)}`
-        : decision === "refund_everyone" ? `Refund ${paidBy} people ${money(cents || 0)} each`
+    decision === "release" ? `Release ${host.name}'s payout`
+      : decision === "split_refund" ? `Split ${money(total)}: ${money(each)} each`
+        : decision === "refund_reporter" ? `Refund ${reporter} ${money(reporterCents)}`
           : "Accept the claim on PayPal";
 
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (needsAmount && !(cents > 0)) {
-      toast("Enter an amount to refund.", "error");
+    if (!ready) {
+      toast("Enter an amount first.", "error");
       return;
     }
     setBusy(true);
     try {
       const next = await api<CaseDetail>(`/admin/cases/${c.id}/resolve`, {
         method: "POST",
-        json: { decision, refund_cents_each: needsAmount ? cents : 0, note, pay_now: payNow },
+        json: {
+          decision, note, pay_now: payNow,
+          refund_cents_each: decision === "refund_reporter" ? reporterCents : 0,
+          refund_total_cents: decision === "split_refund" ? total : 0,
+        },
       });
       toast("Decided. Everyone on the quest can see the outcome.", "money");
       onDone(next);
@@ -317,46 +353,88 @@ function DecisionForm({ c, paidBy, onDone }: { c: CaseDetail; paidBy: number; on
   };
 
   return (
-    <form onSubmit={submit} className="panel flex flex-col gap-4 p-5" aria-labelledby="decide-h">
+    <form onSubmit={submit} className="panel flex flex-col gap-5 p-5" aria-labelledby="decide-h">
       <h3 id="decide-h" className="h3">Your decision</h3>
-      <fieldset className="grid gap-2 sm:grid-cols-2">
+      <fieldset className="flex flex-col gap-2">
         <legend className="sr-only">Decision</legend>
         {options.filter((o) => o.show).map((o) => (
           <label key={o.id} className={`flex cursor-pointer gap-3 border-2 p-3 ${decision === o.id ? "border-ink bg-white" : "border-rule hover:border-ink"}`}>
             <input type="radio" name="decision" value={o.id} checked={decision === o.id} onChange={() => setDecision(o.id)} className="mt-1 h-4 w-4 accent-[#1a2130]" />
             <span className="leading-tight">
-              <span className="block font-bold">{o.label}{suggested === o.id && <span className="ml-2 text-[12px] font-semibold text-muted">Claude&apos;s pick</span>}</span>
-              <span className="text-[13px] text-muted">{o.text}</span>
+              <span className="block font-bold">
+                {o.label}
+                {suggested === o.id && <span className="chip chip-held ml-2 align-middle">Claude&apos;s pick</span>}
+              </span>
+              <span className="text-[14px] text-muted">Use when: {o.when}</span>
             </span>
           </label>
         ))}
       </fieldset>
-      {needsAmount && (
-        <label className="flex max-w-[260px] flex-col gap-1">
-          <span className="text-[14px] font-semibold">{decision === "refund_everyone" ? "Amount each" : "Amount"}</span>
-          <span className="flex items-center gap-2">
-            <span aria-hidden="true" className="text-[18px] font-bold">$</span>
-            <input className="field tab" inputMode="decimal" value={amount} onChange={(e) => setAmount(e.target.value.replace(/[^0-9.]/g, ""))} placeholder="0.00" />
-          </span>
-        </label>
+
+      {decision === "split_refund" && (
+        <Money label="Total to split" hint={`Divided equally between the ${payers.length} people who went, ${host.name} included.`}
+          value={splitTotal} onChange={setSplitTotal} />
       )}
+      {decision === "refund_reporter" && (
+        <Money label={`Amount back to ${reporter}`} hint={`Up to ${money(reporterLeft)}, what they paid.`} value={reporterAmt} onChange={setReporterAmt} />
+      )}
+
+      <div className="border-2 border-ink bg-paper p-4" aria-live="polite">
+        <div className="label mb-2">What happens</div>
+        <ul className="flex flex-col gap-1 text-[15px]">
+          {decision === "release" && <li>Nobody gets money back.</li>}
+          {decision === "split_refund" && (
+            each > 0 ? (
+              <>
+                <li className="font-semibold">{money(total)} ÷ {payers.length} people = {money(each)} each</li>
+                {splitRefunds.map((r) => <li key={r.name}>{r.name} gets {money(r.cents)} back on PayPal</li>)}
+                {hostPaid && <li className="text-muted">{host.name} went too. That {money(each)} share stays in {host.name}&apos;s payout instead of being refunded.</li>}
+              </>
+            ) : <li className="text-muted">Enter the total to split.</li>
+          )}
+          {decision === "refund_reporter" && (reporterCents > 0 ? <li>{reporter} gets {money(reporterCents)} back on PayPal</li> : <li className="text-muted">Enter an amount.</li>)}
+          {decision === "accept_claim" && <li>PayPal refunds {reporter} {money(Math.min(c.disputed_cents, reporterLeft))} and closes the dispute.</li>}
+          <li className="mt-1 border-t border-rule pt-2">
+            {completed ? (
+              fromHost > 0 ? <>{host.name} was already paid. Sidequest covers {money(fromHost)} and {host.name} owes it back.</> : <>{host.name} was already paid. Nothing changes for {host.name}.</>
+            ) : (
+              <><strong>{host.name} is paid {money(payoutAfter)}</strong>{fromHost > 0 && <span className="text-muted"> instead of {money(payoutBefore)}</span>}.</>
+            )}
+          </li>
+        </ul>
+      </div>
+
       <label className="flex flex-col gap-1">
         <span className="text-[14px] font-semibold">Note to the group</span>
-        <textarea className="field" rows={3} required minLength={3} maxLength={600} value={note} onChange={(e) => setNote(e.target.value)}
-          placeholder="What you decided and why. Everyone on the quest sees this, and it goes in the audit log." />
+        <textarea className="field" rows={2} required minLength={3} maxLength={600} value={note}
+          onChange={(e) => { setNote(e.target.value); setNoteTouched(true); }} />
+        <span className="text-[12px] text-muted">Everyone on the quest sees this, and it goes in the audit log.</span>
       </label>
       {c.quest.status === "locked" && (
         <label className="flex items-center gap-2 text-[14px]">
           <input type="checkbox" checked={payNow} onChange={(e) => setPayNow(e.target.checked)} className="h-4 w-4 accent-[#1a2130]" />
-          Pay the host now instead of waiting for the scheduled payout
+          Pay {host.name} now instead of at the scheduled time
         </label>
       )}
       <div>
-        <button className={`btn ${decision === "release" ? "btn-ink" : "btn-money"}`} type="submit" disabled={busy}>
+        <button className={`btn ${decision === "release" ? "btn-ink" : "btn-money"}`} type="submit" disabled={busy || !ready}>
           {busy ? "Working on PayPal..." : confirm}
         </button>
       </div>
     </form>
+  );
+}
+
+function Money({ label, hint, value, onChange }: { label: string; hint: string; value: string; onChange: (v: string) => void }) {
+  return (
+    <label className="flex flex-col gap-1">
+      <span className="text-[14px] font-semibold">{label}</span>
+      <span className="flex max-w-[260px] items-center gap-2">
+        <span aria-hidden="true" className="text-[18px] font-bold">$</span>
+        <input className="field tab" inputMode="decimal" value={value} onChange={(e) => onChange(e.target.value.replace(/[^0-9.]/g, ""))} placeholder="0.00" />
+      </span>
+      <span className="text-[13px] text-muted">{hint}</span>
+    </label>
   );
 }
 
